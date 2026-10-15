@@ -5,7 +5,7 @@ description = "Hourly collector for Librus messages and announcements synced to 
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Mikalai Derachits", email = "n.derachits@gmail.com" }
+    { name = "Mikalai Dzerachyts", email = "n.derachits@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
