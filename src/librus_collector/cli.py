@@ -229,7 +229,7 @@ def cmd_test_telegram(args):
 
     print(f"Testing Telegram connection for bot to chat {config.telegram_chat_id}...")
     store = ItemStore(config.items_dir)
-    items = store.load_all_items(sort_by="date")
+    items = store.load_all_items(sort_by="date", reverse=True)
     if getattr(args, "sample", False) and items:
         sample_item = items[0]
         print(f"Sending sample item: [{sample_item.item_type.value}] {sample_item.title}...")
