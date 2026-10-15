@@ -18,6 +18,7 @@ def test_sync_engine_end_to_end(tmp_path):
         librus_password="test_password",
         local_export_path=str(fallback_file),
         state_file_path=str(state_file),
+        items_dir=str(tmp_path / "items"),
     )
 
     state_mgr = SyncStateManager(str(state_file))
@@ -81,6 +82,7 @@ def test_sync_engine_handles_exception(tmp_path):
         librus_login="user",
         librus_password="pass",
         state_file_path=str(tmp_path / "state.json"),
+        items_dir=str(tmp_path / "items"),
     )
     mock_client = MagicMock()
     mock_client.collect_all.side_effect = RuntimeError("Connection dropped")
@@ -102,6 +104,7 @@ def test_sync_engine_force_resync(tmp_path):
         librus_password="test_password",
         local_export_path=str(fallback_file),
         state_file_path=str(state_file),
+        items_dir=str(tmp_path / "items"),
     )
 
     state_mgr = SyncStateManager(str(state_file))
