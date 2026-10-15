@@ -23,7 +23,7 @@ def test_format_single_item():
     assert "• Data / Date: 2026-10-20 17:00" in formatted
     assert "• Od / From: Wychowawca Klasy" in formatted
     assert "• Załączniki / Attachments: porzadek_zebrania.pdf" in formatted
-    assert "• Źródło / Source: synergia_ogloszenia" in formatted
+    assert "• Źródło / Source:" not in formatted
     assert "Zapraszamy na spotkanie w sali 102." in formatted
 
 

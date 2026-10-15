@@ -56,8 +56,8 @@ class ItemStore:
         self.items_dir.mkdir(parents=True, exist_ok=True)
         target_path = self._get_file_path(item)
 
-        # Ensure any legacy_id key is stripped from metadata
-        clean_metadata = {k: v for k, v in item.metadata.items() if k != "legacy_id"}
+        # Ensure legacy_id and source keys are stripped from metadata
+        clean_metadata = {k: v for k, v in item.metadata.items() if k not in ("legacy_id", "source")}
 
         frontmatter_data: Dict[str, Any] = {
             "id": item.sortable_id,
@@ -171,8 +171,9 @@ class ItemStore:
         date = data.get("date", "")
         attachments = data.get("attachments") or []
         metadata = data.get("metadata") or {}
-        # Strip any legacy_id key from metadata
+        # Strip legacy/internal keys from metadata
         metadata.pop("legacy_id", None)
+        metadata.pop("source", None)
 
         # Parse collected_at
         raw_collected = data.get("collected_at")
@@ -316,7 +317,6 @@ class ItemStore:
             date = ""
             author = ""
             attachments = []
-            source = ""
 
             content_lines = []
             is_content = False
@@ -330,8 +330,6 @@ class ItemStore:
                 elif stripped.startswith("• Załączniki / Attachments:"):
                     att_str = stripped.replace("• Załączniki / Attachments:", "").strip()
                     attachments = [a.strip() for a in att_str.split(",") if a.strip()]
-                elif stripped.startswith("• Źródło / Source:"):
-                    source = stripped.replace("• Źródło / Source:", "").strip()
                 elif stripped == "### Treść / Content:":
                     is_content = True
                 elif is_content:
@@ -361,8 +359,6 @@ class ItemStore:
             )
 
             metadata = {}
-            if source:
-                metadata["source"] = source
 
             feed_item = SchoolFeedItem(
                 id=feed_id,

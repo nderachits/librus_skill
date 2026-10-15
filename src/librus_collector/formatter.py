@@ -28,11 +28,6 @@ def format_single_item(item: SchoolFeedItem) -> str:
         lines.append(f"• Od / From: {item.author}")
     if item.attachments:
         lines.append(f"• Załączniki / Attachments: {', '.join(item.attachments)}")
-    
-    # Metadata details if present
-    source = item.metadata.get("source")
-    if source:
-        lines.append(f"• Źródło / Source: {source}")
 
     lines.append("")
     lines.append("### Treść / Content:")

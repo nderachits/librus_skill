@@ -51,7 +51,7 @@ def test_item_store_save_and_load(tmp_path):
         date="2026-10-15T06:13:04",
         content="Drodzy Rodzice,\nZapraszamy na wycieczkę do filharmonii w przyszły wtorek.",
         attachments=["zgoda.pdf"],
-        metadata={"source": "synergia_api"},
+        metadata={"category": "wycieczka", "source": "synergia_api"},
     )
 
     path = store.save_item(item)
@@ -68,7 +68,8 @@ def test_item_store_save_and_load(tmp_path):
     assert "author: Kruk-Zabawa Beata" in text
     assert "date: '2026-10-15T06:13:04'" in text or 'date: "2026-10-15T06:13:04"' in text or "date: 2026-10-15T06:13:04" in text
     assert "Zapraszamy na wycieczkę do filharmonii w przyszły wtorek." in text
-    # Verify no duplicate headers in body
+    # Verify no duplicate headers in body and no source in metadata
+    assert "source:" not in text
     assert "# [WIADOMOŚĆ / MESSAGE]" not in text
     assert "• **Data / Date:**" not in text
     assert "### Treść / Content:" not in text
@@ -87,7 +88,7 @@ def test_item_store_save_and_load(tmp_path):
     assert loaded.date == item.date
     assert loaded.content == item.content
     assert loaded.attachments == ["zgoda.pdf"]
-    assert loaded.metadata == {"source": "synergia_api"}
+    assert loaded.metadata == {"category": "wycieczka"}
 
 
 def test_item_store_finder_chronological_sorting(tmp_path):
