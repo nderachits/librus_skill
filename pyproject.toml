@@ -3,6 +3,10 @@ name = "librus-collector"
 version = "0.1.0"
 description = "Hourly collector for Librus messages and announcements synced to a Google Doc for NotebookLM"
 readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Mikalai Derachits", email = "n.derachits@gmail.com" }
+]
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12.0",
@@ -13,6 +17,10 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nderachits/librus_skill"
+Repository = "https://github.com/nderachits/librus_skill"
 
 [project.scripts]
 librus-sync = "librus_collector.cli:main"

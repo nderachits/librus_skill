@@ -65,7 +65,7 @@ A dedicated, lightweight Python tool (built with `uv` and `git`) that synchroniz
 
 ### 1. Clone & Install Dependencies
 ```bash
-git clone <repo-url> librus_skill
+git clone https://github.com/nderachits/librus_skill.git
 cd librus_skill
 uv sync
 ```
@@ -138,8 +138,25 @@ launchctl load ~/Library/LaunchAgents/com.librus.collector.plist
 ---
 
 ## 🧪 Testing
-
+ 
 Run unit and integration test suite:
 ```bash
 uv run pytest -v
 ```
+
+---
+
+## ⚖️ Legal & Privacy Disclaimer
+
+This project is an independent, open-source tool developed for personal productivity and family coordination with Google NotebookLM.
+
+- **Unofficial Tool:** This project is not affiliated with, maintained, authorized, sponsored, or endorsed by Librus Sp. z o.o. or any of its affiliates. "Librus" and "Synergia" are trademarks or registered trademarks of Librus Sp. z o.o.
+- **Data Privacy & Responsibility:** Users are solely responsible for compliance with their school's policies and the Librus Synergia Terms of Service. All credentials are kept local to your machine and transmitted solely over TLS/HTTPS directly to verified Librus domains.
+- **Fair Use:** The hourly synchronization schedule is designed to be gentle and respectful of Librus infrastructure. Avoid setting aggressive polling intervals.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+

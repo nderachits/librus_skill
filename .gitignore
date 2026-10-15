@@ -46,10 +46,13 @@ credentials.json
 token.json
 client_secret*.json
 
-# State and cache files
+# State, cache, and local export files
 .librus_state.json
 librus_state.json
+librus_updates.md
+*.tmp
 *.log
+
 
 # OS generated files
 .DS_Store
