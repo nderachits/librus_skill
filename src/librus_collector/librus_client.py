@@ -328,6 +328,7 @@ class LibrusClient:
                         "message_id": msg_id,
                         "unread": msg.get("readDate") is None,
                         "source": "wiadomosci_api",
+                        "has_full_content": False,
                     },
                 )
             )
@@ -413,7 +414,12 @@ class LibrusClient:
                     author=author,
                     date=date_str,
                     content=f"Wiadomość z systemu Synergia: {title}",
-                    metadata={"link": link_href, "source": "synergia_html"},
+                    metadata={
+                        "link": link_href,
+                        "message_id": msg_id,
+                        "source": "synergia_html",
+                        "has_full_content": False,
+                    },
                 )
             )
 
@@ -422,13 +428,13 @@ class LibrusClient:
     def populate_message_content(self, item: SchoolFeedItem) -> None:
         """
         Fetch full body content for a message that only has summary metadata.
-        Supports both modern API (/api/message/{id}) and Synergia HTML message view.
+        Supports both modern API (/api/inbox/messages/{id}) and Synergia HTML message view.
         """
         if not self.is_authenticated:
             self.login_sync()
 
-        # If item already has substantive text (not empty and not default placeholder), nothing to do
-        if item.content and not item.content.startswith("Wiadomość z systemu Synergia"):
+        # If item already has full content explicitly populated, skip
+        if item.metadata.get("has_full_content") is True:
             return
 
         source = item.metadata.get("source")
@@ -438,6 +444,7 @@ class LibrusClient:
         # 1. Try modern JSON API if message came from API or has numeric msg_id
         if source == "wiadomosci_api" or (msg_id and msg_id.isdigit()):
             for endpoint_tpl in [
+                f"https://{WIADOMOSCI_DOMAIN}/api/inbox/messages/{msg_id}",
                 f"https://{WIADOMOSCI_DOMAIN}/api/message/{msg_id}",
                 f"https://{WIADOMOSCI_DOMAIN}/api/messages/{msg_id}",
             ]:
@@ -448,9 +455,40 @@ class LibrusClient:
                         payload = resp.json()
                         msg_obj = payload.get("data", payload)
                         if isinstance(msg_obj, dict):
-                            raw_body = msg_obj.get("content") or msg_obj.get("body") or ""
+                            raw_body = (
+                                msg_obj.get("Message")
+                                or msg_obj.get("message")
+                                or msg_obj.get("content")
+                                or msg_obj.get("body")
+                                or ""
+                            )
                             if raw_body:
                                 item.content = self._decode_message_content(raw_body)
+                                item.metadata["has_full_content"] = True
+
+                            # Parse attachments if present in detail response
+                            api_attachments = msg_obj.get("attachments")
+                            if isinstance(api_attachments, list) and api_attachments:
+                                filenames = []
+                                for att in api_attachments:
+                                    if isinstance(att, dict):
+                                        fname = att.get("filename") or att.get("name")
+                                        if fname:
+                                            filenames.append(fname)
+                                    elif isinstance(att, str) and att:
+                                        filenames.append(att)
+                                if filenames:
+                                    cleaned = [
+                                        a
+                                        for a in item.attachments
+                                        if a != "Załącznik dołączony do wiadomości"
+                                    ]
+                                    for fn in filenames:
+                                        if fn not in cleaned:
+                                            cleaned.append(fn)
+                                    item.attachments = cleaned
+
+                            if item.metadata.get("has_full_content"):
                                 return
                 except Exception as e:
                     logger.debug("API message detail fetch failed for %s: %s", endpoint_tpl, e)
@@ -465,6 +503,7 @@ class LibrusClient:
                     body_text, attachments = self._parse_single_message_html(resp.text)
                     if body_text:
                         item.content = body_text
+                        item.metadata["has_full_content"] = True
                     if attachments:
                         item.attachments = list(set(item.attachments + attachments))
                     return

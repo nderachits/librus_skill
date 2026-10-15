@@ -322,6 +322,62 @@ def test_populate_message_content_via_api():
 
 
 @responses.activate
+def test_populate_message_content_via_inbox_api_with_preview():
+    """Verify populate_message_content replaces truncated preview with full body from inbox API and parses attachments."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    full_text = (
+        "Dear Parents,\n\n"
+        "today I will send home consents for the next weeks outing to music school. "
+        "Please complete it with your childs name and sign.\n\n"
+        "Regards\nMs Beata"
+    )
+    b64_full = base64.b64encode(full_text.encode("utf-8")).decode("utf-8")
+
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/inbox/messages/1254708",
+        json={
+            "data": {
+                "messageId": "1254708",
+                "topic": "Consent for visit to a music school",
+                "Message": b64_full,
+                "attachments": [
+                    {"id": "991", "filename": "zgoda_wycieczka.pdf"}
+                ],
+            }
+        },
+        status=200,
+    )
+
+    # Item initially has 100-char truncated preview from listing endpoint
+    preview_content = "Dear Parents,\n\ntoday I will send home consents for the next weeks outing to music school. Please co"
+    item = SchoolFeedItem(
+        id="message:1254708",
+        item_type=SchoolItemType.MESSAGE,
+        title="Consent for visit to a music school",
+        content=preview_content,
+        attachments=["Załącznik dołączony do wiadomości"],
+        metadata={
+            "message_id": "1254708",
+            "source": "wiadomosci_api",
+            "has_full_content": False,
+        },
+    )
+
+    client.populate_message_content(item)
+
+    assert item.content == full_text
+    assert item.metadata["has_full_content"] is True
+    assert item.attachments == ["zgoda_wycieczka.pdf"]
+
+    # Calling populate again should not perform additional requests (assert call count is 1)
+    client.populate_message_content(item)
+    assert len(responses.calls) == 1
+
+
+@responses.activate
 def test_fetch_notes():
     """Verify fetching teacher conduct remarks (Uwagi i informacje)."""
     client = LibrusClient("user", "pass")
@@ -374,4 +430,96 @@ def test_session_redirect_hook_blocks_http():
 
     with pytest.raises(SecurityError, match="Insecure transport rejected"):
         client.session.get("https://synergia.librus.pl/redirect_test")
+
+
+@responses.activate
+def test_populate_message_content_fallback_on_api_error():
+    """Verify that when API endpoints return 500/errors, initial preview is kept without raising."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/inbox/messages/888",
+        status=500,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/message/888",
+        status=500,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/messages/888",
+        status=500,
+    )
+
+    item = SchoolFeedItem(
+        id="message:888",
+        item_type=SchoolItemType.MESSAGE,
+        title="Błąd serwera",
+        content="Podgląd wiadomości",
+        metadata={
+            "message_id": "888",
+            "source": "wiadomosci_api",
+            "has_full_content": False,
+        },
+    )
+
+    client.populate_message_content(item)
+    # Content should remain as fallback preview
+    assert item.content == "Podgląd wiadomości"
+    assert item.metadata["has_full_content"] is False
+
+
+@responses.activate
+def test_populate_message_content_html_fallback_when_api_fails():
+    """Verify that if modern API endpoints fail but HTML link is available, HTML detail is used."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/inbox/messages/999",
+        status=404,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/message/999",
+        status=404,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/messages/999",
+        status=404,
+    )
+
+    detail_html = """
+    <html><body>
+        <div class="container-message">Treść z widoku HTML po awarii API</div>
+    </body></html>
+    """
+    responses.add(
+        responses.GET,
+        "https://synergia.librus.pl/wiadomosci/1/5/999",
+        body=detail_html,
+        status=200,
+    )
+
+    item = SchoolFeedItem(
+        id="message:999",
+        item_type=SchoolItemType.MESSAGE,
+        title="Awaria API",
+        content="Krótki podgląd",
+        metadata={
+            "message_id": "999",
+            "source": "wiadomosci_api",
+            "link": "/wiadomosci/1/5/999",
+            "has_full_content": False,
+        },
+    )
+
+    client.populate_message_content(item)
+    assert item.content == "Treść z widoku HTML po awarii API"
+    assert item.metadata["has_full_content"] is True
 
