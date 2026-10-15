@@ -232,41 +232,6 @@ def test_google_docs_clean_local_file(tmp_path):
     assert sync.clean_local_file() == 0
 
 
-def test_google_docs_read_and_sync_local_mirror(tmp_path):
-    """Verify reading doc text and downloading into local mirror file."""
-    local_file = tmp_path / "updates.md"
-    sync = GoogleDocsSync(
-        doc_id="remote_doc",
-        local_fallback_file=str(local_file),
-    )
-
-    mock_service = MagicMock()
-    mock_docs = MagicMock()
-    mock_service.documents.return_value = mock_docs
-    mock_docs.get.return_value.execute.return_value = {
-        "body": {
-            "content": [
-                {
-                    "paragraph": {
-                        "elements": [
-                            {"textRun": {"content": "# Remote Doc Header\n"}},
-                            {"textRun": {"content": "Some remote body text.\n"}},
-                        ]
-                    }
-                }
-            ]
-        }
-    }
-
-    sync._service = mock_service
-    sync.__class__.is_google_configured = property(lambda self: True)
-
-    text = sync.sync_local_mirror_from_google()
-    assert "Remote Doc Header" in text
-    assert "Some remote body text." in text
-    assert local_file.read_text(encoding="utf-8") == text
-
-
 def test_google_docs_push_local_mirror(tmp_path):
     """Verify push_local_mirror_to_google uploads local file content to Google Doc."""
     local_file = tmp_path / "updates.md"

@@ -26,13 +26,16 @@ Connecting a single rolling Google Doc to NotebookLM is one of the most effectiv
 
 ## 🛠️ Architecture
 
+The system operates as a **strictly unidirectional, read-only downstream copy** of Librus Synergia. It never writes back to, alters, or mutates any data in Librus; all extracted updates flow solely downstream into local storage vaults and document mirrors.
+
 ```
                  ┌────────────────────────────────┐
-                 │        Librus Synergia         │
+                 │   Librus Synergia (Upstream)   │
                  │  - Announcements (Ogłoszenia)  │
                  │  - Messages (Wiadomości)       │
                  │  - Calendar & Homework         │
                  └──────────────┬─────────────────┘
+                                │ Read-only downstream ingest
                                 │ HTTPS (TLS encrypted)
                                 ▼
                  ┌────────────────────────────────┐
@@ -41,7 +44,7 @@ Connecting a single rolling Google Doc to NotebookLM is one of the most effectiv
                  │  - Primary ID Deduplication    │
                  │  - Structured ItemStore        │
                  └──────────────┬─────────────────┘
-                                │
+                                │ Downstream distribution
           ┌─────────────────────┼─────────────────────┐
           ▼                     ▼                     ▼
 ┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
@@ -49,7 +52,8 @@ Connecting a single rolling Google Doc to NotebookLM is one of the most effectiv
 │   data/items/     │ │ Single roll doc   │ │ librus_updates.md │
 │ (Finder-sortable) │ │        │          │ └───────────────────┘
 └───────────────────┘ └────────┼──────────┘
-                               ▼
+                                │ Downstream source
+                                ▼
                         Google NotebookLM
                      - Semantic Q&A & Search
 ```
@@ -140,11 +144,6 @@ uv run librus-sync run --force
 ### Clean duplicate batches from local file:
 ```bash
 uv run librus-sync clean
-```
-
-### Pull and mirror directly from Google Doc:
-```bash
-uv run librus-sync pull
 ```
 
 ### Push local mirror file to Google Doc:

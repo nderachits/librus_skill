@@ -114,30 +114,6 @@ def cmd_import(args):
     print(f"• View in Finder: open {config.items_dir}")
 
 
-def cmd_pull(args):
-    """Pull latest content from Google Doc into the local mirror file."""
-    config = get_config()
-    docs = GoogleDocsSync(
-        doc_id=config.google_doc_id,
-        service_account_file=config.google_service_account_file,
-        client_secrets_file=config.google_client_secrets_file,
-        token_file=config.google_token_file,
-        local_fallback_file=config.local_export_path,
-    )
-    if not docs.is_google_configured:
-        print("❌ Google Docs is not configured. Set GOOGLE_DOC_ID and credentials first.")
-        sys.exit(1)
-    try:
-        text = docs.sync_local_mirror_from_google()
-        print(f"\n✅ Successfully synchronized local mirror from Google Doc!")
-        print(f"• Document ID: {docs.doc_id}")
-        print(f"• Local mirror path: {config.local_export_path}")
-        print(f"• Total characters: {len(text)}")
-    except Exception as e:
-        print(f"\n❌ Failed to sync from Google Doc: {e}")
-        sys.exit(1)
-
-
 def cmd_push(args):
     """Push local mirror file (librus_updates.md) to the configured Google Doc."""
     config = get_config()
@@ -361,10 +337,6 @@ def main():
     # clean
     p_clean = subparsers.add_parser("clean", help="Clean duplicate batches from the local updates file")
     p_clean.set_defaults(func=cmd_clean)
-
-    # pull
-    p_pull = subparsers.add_parser("pull", help="Pull and mirror latest content directly from Google Doc")
-    p_pull.set_defaults(func=cmd_pull)
 
     # push
     p_push = subparsers.add_parser("push", help="Push local mirror file content to the configured Google Doc")

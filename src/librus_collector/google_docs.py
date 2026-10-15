@@ -328,27 +328,7 @@ class GoogleDocsSync:
                         text_pieces.append(self._extract_text_from_structural_elements(cell_content))
         return "".join(text_pieces)
 
-    def read_document_text(self) -> str:
-        """Fetch all text content from the configured Google Doc."""
-        if not self.doc_id or not self.is_google_configured:
-            raise RuntimeError("Google Docs is not configured or missing credentials.")
-        service = self.get_service()
-        doc = service.documents().get(documentId=self.doc_id).execute()
-        return self._extract_text_from_doc(doc)
 
-    def sync_local_mirror_from_google(self) -> str:
-        """Download latest Google Doc content and write directly to local mirror file."""
-        text = self.read_document_text()
-        self.local_fallback_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.local_fallback_file, "w", encoding="utf-8") as f:
-            f.write(text)
-        logger.info(
-            "Synchronized local mirror %s from Google Doc %s (%d chars)",
-            self.local_fallback_file,
-            self.doc_id,
-            len(text),
-        )
-        return text
 
     def push_local_mirror_to_google(self) -> Dict[str, Any]:
         """Upload current local mirror file content to the configured Google Doc (rewrite)."""

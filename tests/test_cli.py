@@ -95,27 +95,6 @@ def test_cli_clean(capsys, tmp_path):
     assert "Cleaned 10 duplicate history entries" in captured.out
 
 
-def test_cli_pull(capsys, tmp_path):
-    """Test CLI pull command when Google Docs is configured."""
-    local_file = tmp_path / "updates.md"
-
-    with patch("librus_collector.cli.get_config") as mock_cfg, \
-         patch("librus_collector.cli.GoogleDocsSync") as mock_docs_cls:
-        mock_cfg.return_value.local_export_path = str(local_file)
-        mock_cfg.return_value.google_doc_id = "doc_xyz"
-        mock_docs = mock_docs_cls.return_value
-        mock_docs.is_google_configured = True
-        mock_docs.doc_id = "doc_xyz"
-        mock_docs.sync_local_mirror_from_google.return_value = "Content from Google Doc"
-
-        with patch("sys.argv", ["librus-sync", "pull"]):
-            main()
-
-    captured = capsys.readouterr()
-    assert "Successfully synchronized local mirror from Google Doc" in captured.out
-    assert "doc_xyz" in captured.out
-
-
 def test_cli_push(capsys, tmp_path):
     """Test CLI push command when Google Docs is configured."""
     local_file = tmp_path / "updates.md"
