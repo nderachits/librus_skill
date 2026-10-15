@@ -287,7 +287,9 @@ class ItemStore:
         history_map = {}
         if state_history:
             for entry in state_history:
-                key = (entry.get("type", ""), entry.get("title", ""), entry.get("date", ""))
+                raw_t = entry.get("title", "") or ""
+                raw_d = entry.get("date", "") or ""
+                key = (entry.get("type", ""), raw_t.strip(), raw_d.strip())
                 history_map[key] = entry.get("id")
 
         for block in raw_blocks:
