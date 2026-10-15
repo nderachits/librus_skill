@@ -62,6 +62,15 @@ class AppConfig(BaseModel):
         default_factory=lambda: os.getenv("LIBRUS_ITEMS_DIR", "data/items"),
         description="Path to directory where individual markdown items are stored",
     )
+    telegram_bot_token: Optional[str] = Field(
+        default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN"),
+        description="Telegram Bot token for notifications",
+    )
+    telegram_chat_id: Optional[str] = Field(
+        default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID"),
+        description="Telegram chat ID or channel username for notifications",
+    )
+
 
     def validate_librus_credentials(self) -> None:
         """Verify that Librus credentials have been configured."""

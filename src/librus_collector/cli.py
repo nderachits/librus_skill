@@ -14,6 +14,7 @@ from librus_collector.scheduler import DaemonScheduler, generate_crontab_line, g
 from librus_collector.security import mask_secret
 from librus_collector.state import SyncStateManager
 from librus_collector.sync_engine import LibrusSyncEngine
+from librus_collector.telegram_notifier import TelegramNotifier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +50,9 @@ def cmd_run(args):
             print(f"• Local mirror: {config.local_export_path}")
         elif result.target_type == "local_file":
             print(f"• Local file path: {config.local_export_path}")
+        tel_sent = getattr(result, "telegram_sent", 0)
+        if isinstance(tel_sent, int) and tel_sent > 0:
+            print(f"• Telegram notifications: {tel_sent} update(s) sent to chat {config.telegram_chat_id}")
     else:
         print(f"\n❌ Synchronization failed: {result.error_message}")
         sys.exit(1)
@@ -175,6 +179,12 @@ def cmd_status(args):
     print(f"• Google Service Account: {config.google_service_account_file or '(not configured)'}")
     print(f"• Google Docs Configured: {'Yes' if docs.is_google_configured else 'No (using local file ' + config.local_export_path + ')'}")
     print(f"• Local Mirror Path: {config.local_export_path}")
+    tel_status = (
+        f"Configured (Chat ID: {config.telegram_chat_id})"
+        if config.telegram_bot_token and config.telegram_chat_id
+        else "Not configured"
+    )
+    print(f"• Telegram Notifications: {tel_status}")
     print("───────────────────────────────────────────────────────")
     summary = state.get_summary()
     store = ItemStore(config.items_dir)
@@ -203,6 +213,35 @@ def cmd_test_login(args):
         print("✅ Authentication successful! Session established.")
     except Exception as e:
         print(f"❌ Authentication failed: {e}")
+        sys.exit(1)
+
+
+def cmd_test_telegram(args):
+    """Verify Telegram bot configuration and test message delivery."""
+    config = get_config()
+    notifier = TelegramNotifier(
+        bot_token=config.telegram_bot_token,
+        chat_id=config.telegram_chat_id,
+    )
+    if not notifier.is_configured:
+        print("❌ Telegram is not configured! Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.")
+        sys.exit(1)
+
+    print(f"Testing Telegram connection for bot to chat {config.telegram_chat_id}...")
+    store = ItemStore(config.items_dir)
+    items = store.load_all_items(sort_by="date")
+    if getattr(args, "sample", False) and items:
+        sample_item = items[0]
+        print(f"Sending sample item: [{sample_item.item_type.value}] {sample_item.title}...")
+        ok = notifier.send_item(sample_item)
+    else:
+        test_msg = "🤖 <b>Librus Collector</b>: Telegram notification test successful!\nConnected and ready to post updates."
+        ok = notifier.send_message(test_msg)
+
+    if ok:
+        print(f"\n✅ Telegram test message delivered successfully to chat {config.telegram_chat_id}!")
+    else:
+        print(f"\n❌ Failed to send Telegram message to chat {config.telegram_chat_id}. Check bot permissions and token.")
         sys.exit(1)
 
 
@@ -319,6 +358,11 @@ def main():
     # test-login
     p_test = subparsers.add_parser("test-login", help="Verify Librus credentials securely")
     p_test.set_defaults(func=cmd_test_login)
+
+    # test-telegram
+    p_tel = subparsers.add_parser("test-telegram", help="Verify Telegram bot and send a test notification")
+    p_tel.add_argument("--sample", action="store_true", help="Send the most recent local Librus item as a formatting sample")
+    p_tel.set_defaults(func=cmd_test_telegram)
 
     # init-doc
     p_doc = subparsers.add_parser("init-doc", help="Create a new Google Doc")

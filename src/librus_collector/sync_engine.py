@@ -11,6 +11,7 @@ from librus_collector.item_store import ItemStore
 from librus_collector.librus_client import LibrusClient
 from librus_collector.models import SchoolItemType, SyncResult
 from librus_collector.state import SyncStateManager
+from librus_collector.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class LibrusSyncEngine:
         state_manager: Optional[SyncStateManager] = None,
         docs_sync: Optional[GoogleDocsSync] = None,
         item_store: Optional[ItemStore] = None,
+        telegram_notifier: Optional[TelegramNotifier] = None,
     ):
         self.config = config or get_config()
         self.state_manager = state_manager or SyncStateManager(self.config.state_file_path)
@@ -35,6 +37,10 @@ class LibrusSyncEngine:
             client_secrets_file=self.config.google_client_secrets_file,
             token_file=self.config.google_token_file,
             local_fallback_file=self.config.local_export_path,
+        )
+        self.telegram_notifier = telegram_notifier or TelegramNotifier(
+            bot_token=self.config.telegram_bot_token,
+            chat_id=self.config.telegram_chat_id,
         )
         self.librus_client = librus_client
 
@@ -107,6 +113,19 @@ class LibrusSyncEngine:
 
             target_type = append_res.get("target", "unknown")
 
+            # Deliver new items to Telegram if configured
+            telegram_sent = 0
+            if new_items and self.telegram_notifier.is_configured:
+                # In force resync mode, only send items that were not already previously recorded in state
+                items_to_notify = (
+                    [it for it in new_items if it.canonical_id not in self.state_manager.synced_ids]
+                    if force
+                    else new_items
+                )
+                if items_to_notify:
+                    telegram_sent = self.telegram_notifier.send_items(items_to_notify)
+                    logger.info("Dispatched %d new items to Telegram (%s)", telegram_sent, self.telegram_notifier.chat_id)
+
             # Persist state (reset history if forced)
             self.state_manager.mark_synced(new_items, reset=force)
             logger.info("Successfully synced %d new items to %s", len(new_items), target_type)
@@ -117,6 +136,7 @@ class LibrusSyncEngine:
                 items_found=len(all_items),
                 items_new=len(new_items),
                 items_synced=len(new_items),
+                telegram_sent=telegram_sent,
                 doc_id=self.docs_sync.doc_id,
                 target_type=target_type,
                 item_ids_synced=[item.id for item in new_items],

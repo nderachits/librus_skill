@@ -152,6 +152,7 @@ class SyncResult(BaseModel):
     items_found: int = 0
     items_new: int = 0
     items_synced: int = 0
+    telegram_sent: int = 0
     doc_id: Optional[str] = None
     target_type: str = "google_doc"  # or 'local_file'
     error_message: Optional[str] = None

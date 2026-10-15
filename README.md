@@ -37,25 +37,26 @@ The system operates as a **strictly unidirectional, read-only downstream copy** 
                  └──────────────┬─────────────────┘
                                 │ Read-only downstream ingest
                                 │ HTTPS (TLS encrypted)
+                                │ Primary ID deduplication
                                 ▼
                  ┌────────────────────────────────┐
                  │       Librus Collector         │
                  │  - Native LibrusClient         │
-                 │  - Primary ID Deduplication    │
                  │  - Structured ItemStore        │
+                 │  - Multi-channel Dispatcher    │
                  └──────────────┬─────────────────┘
                                 │ Downstream distribution
-          ┌─────────────────────┼─────────────────────┐
-          ▼                     ▼                     ▼
-┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
-│ Structured Vault  │ │    Google Doc     │ │  Local Mirror     │
-│   data/items/     │ │ Single roll doc   │ │ librus_updates.md │
-│ (Finder-sortable) │ │        │          │ └───────────────────┘
-└───────────────────┘ └────────┼──────────┘
-                                │ Downstream source
-                                ▼
-                        Google NotebookLM
-                     - Semantic Q&A & Search
+         ┌──────────────────────┼──────────────────────┬──────────────────────┐
+         ▼                      ▼                      ▼                      ▼
+┌──────────────────┐  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
+│ Structured Vault │  │    Google Doc    │   │  Local Mirror    │   │ Telegram Alerts  │
+│   data/items/    │  │ Single roll doc  │   │librus_updates.md │   │ Chat or Channel  │
+│(Finder-sortable) │  │        │         │   └──────────────────┘   │ (Instant alerts) │
+└──────────────────┘  └────────┼─────────┘                          └──────────────────┘
+                               │ Downstream source
+                               ▼
+                       Google NotebookLM
+                    - Semantic Q&A & Search
 ```
 
 ---
@@ -94,6 +95,10 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 # Optional storage paths:
 # LIBRUS_ITEMS_DIR=data/items
 # LOCAL_EXPORT_PATH=librus_updates.md
+
+# Telegram Notifications (Optional - send instant alerts for new items)
+TELEGRAM_BOT_TOKEN=8904216907:...
+TELEGRAM_CHAT_ID=393013203
 ```
 
 > **Note on Google Authentication:**
@@ -164,6 +169,14 @@ uv run librus-sync status
 ### Test Librus connection securely:
 ```bash
 uv run librus-sync test-login
+```
+
+### Verify Telegram bot & notification delivery:
+```bash
+uv run librus-sync test-telegram
+
+# Or dispatch a formatted preview of the latest school item to verify formatting:
+uv run librus-sync test-telegram --sample
 ```
 
 ### Automatically create a new Google Doc:

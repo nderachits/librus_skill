@@ -86,6 +86,13 @@ Verify encrypted connection to Librus:
 uv run librus-sync test-login
 ```
 
+Verify Telegram notifications:
+```bash
+uv run librus-sync test-telegram
+# Or send a preview of the latest school item:
+uv run librus-sync test-telegram --sample
+```
+
 ## How to Connect to NotebookLM
 1. Open [NotebookLM](https://notebooklm.google.com/).
 2. Create a new notebook (e.g. *"School 2026 - Librus"*).
