@@ -45,6 +45,7 @@ SYNERGIA_ANNOUNCEMENTS_URL = f"{SYNERGIA_BASE_URL}/ogloszenia"
 SYNERGIA_MESSAGES_URL = f"{SYNERGIA_BASE_URL}/wiadomosci/1/5"
 SYNERGIA_CALENDAR_URL = f"{SYNERGIA_BASE_URL}/terminarz"
 SYNERGIA_HOMEWORK_URL = f"{SYNERGIA_BASE_URL}/moje_zadania"
+SYNERGIA_NOTES_URL = f"{SYNERGIA_BASE_URL}/uwagi"
 
 MAX_REDIRECTS = 10
 DEFAULT_TIMEOUT = 25  # seconds
@@ -68,6 +69,16 @@ class LibrusClient:
             "User-Agent": self.user_agent,
             "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
         })
+
+        # Intercept every request and redirect to guarantee encrypted HTTPS to official Librus domains
+        def _security_redirect_hook(response, *args, **kwargs):
+            assert_secure_librus_url(response.url)
+            if response.is_redirect and "Location" in response.headers:
+                target = urljoin(response.url, response.headers["Location"])
+                assert_secure_librus_url(target)
+            return response
+
+        self.session.hooks.setdefault("response", []).append(_security_redirect_hook)
 
     def __repr__(self) -> str:
         return f"<LibrusClient login={self.login!r} authenticated={self.is_authenticated}>"
@@ -214,9 +225,12 @@ class LibrusClient:
             rows = table.find_all("tr", attrs={"class": ["line0", "line1"]})
             data_cells = []
             for r in rows:
-                cell = r.select_one("td")
-                if cell:
-                    data_cells.append(cell.get_text(strip=True))
+                tds = r.find_all("td")
+                if len(tds) >= 2:
+                    # In Synergia tables, col 0 is label ("Dodał", "Data publikacji"), col 1 is the actual value
+                    data_cells.append(tds[1].get_text("\n", strip=True))
+                elif len(tds) == 1:
+                    data_cells.append(tds[0].get_text("\n", strip=True))
 
             if len(data_cells) >= 3:
                 author = data_cells[0]
@@ -233,8 +247,8 @@ class LibrusClient:
             else:
                 continue
 
-            # Deterministic ID for deduplication
-            raw_id = f"{title}_{date_str}_{author}"
+            # Deterministic ID with content hash to prevent collisions on same author/date
+            raw_id = f"{title}_{date_str}_{author}_{content[:60]}"
             feed_id = SchoolFeedItem.make_id(SchoolItemType.ANNOUNCEMENT, raw_id)
 
             items.append(
@@ -405,6 +419,88 @@ class LibrusClient:
 
         return items
 
+    def populate_message_content(self, item: SchoolFeedItem) -> None:
+        """
+        Fetch full body content for a message that only has summary metadata.
+        Supports both modern API (/api/message/{id}) and Synergia HTML message view.
+        """
+        if not self.is_authenticated:
+            self.login_sync()
+
+        # If item already has substantive text (not empty and not default placeholder), nothing to do
+        if item.content and not item.content.startswith("Wiadomość z systemu Synergia"):
+            return
+
+        source = item.metadata.get("source")
+        msg_id = item.metadata.get("message_id")
+        link = item.metadata.get("link")
+
+        # 1. Try modern JSON API if message came from API or has numeric msg_id
+        if source == "wiadomosci_api" or (msg_id and msg_id.isdigit()):
+            for endpoint_tpl in [
+                f"https://{WIADOMOSCI_DOMAIN}/api/message/{msg_id}",
+                f"https://{WIADOMOSCI_DOMAIN}/api/messages/{msg_id}",
+            ]:
+                try:
+                    assert_secure_librus_url(endpoint_tpl)
+                    resp = self.session.get(endpoint_tpl, timeout=DEFAULT_TIMEOUT)
+                    if resp.status_code == 200:
+                        payload = resp.json()
+                        msg_obj = payload.get("data", payload)
+                        if isinstance(msg_obj, dict):
+                            raw_body = msg_obj.get("content") or msg_obj.get("body") or ""
+                            if raw_body:
+                                item.content = self._decode_message_content(raw_body)
+                                return
+                except Exception as e:
+                    logger.debug("API message detail fetch failed for %s: %s", endpoint_tpl, e)
+
+        # 2. Try HTML scraping of the specific message view
+        if link:
+            target_url = urljoin(SYNERGIA_BASE_URL, link)
+            try:
+                assert_secure_librus_url(target_url)
+                resp = self.session.get(target_url, timeout=DEFAULT_TIMEOUT)
+                if resp.status_code == 200:
+                    body_text, attachments = self._parse_single_message_html(resp.text)
+                    if body_text:
+                        item.content = body_text
+                    if attachments:
+                        item.attachments = list(set(item.attachments + attachments))
+                    return
+            except Exception as e:
+                logger.warning("Failed to fetch HTML message body for %s: %s", target_url, e)
+
+    def _parse_single_message_html(self, html: str) -> tuple[str, List[str]]:
+        """Parse message body and attachment list from single message HTML page."""
+        soup = BeautifulSoup(html, "html.parser")
+        body_text = ""
+        attachments: List[str] = []
+
+        # Synergia puts message body in container-message, wysiwyg, or table cell after Treść
+        content_container = soup.select_one("div.container-message, td.container-message, div.wysiwyg")
+        if content_container:
+            body_text = content_container.get_text("\n", strip=True)
+
+        if not body_text:
+            table = soup.find("table", attrs={"class": re.compile(r"decorated")})
+            if table:
+                for row in table.find_all("tr"):
+                    header = row.find(["th", "td"])
+                    if header and "treść" in header.get_text(strip=True).lower():
+                        cells = row.find_all("td")
+                        if cells:
+                            target_cell = cells[-1]
+                            body_text = target_cell.get_text("\n", strip=True)
+                            break
+
+        for a_tag in soup.select("a[href*='pobierz'], a[href*='zalacznik'], a[href*='attachment']"):
+            txt = a_tag.get_text(strip=True)
+            if txt and txt not in attachments:
+                attachments.append(txt)
+
+        return body_text, attachments
+
     def fetch_calendar_events(self) -> List[SchoolFeedItem]:
         """
         Fetch school calendar events / exams (Terminarz).
@@ -429,7 +525,22 @@ class LibrusClient:
             text = el.get_text(" ", strip=True)
             if not text or len(text) < 10:
                 continue
-            if any(k in text.lower() for k in ["sprawdzian", "kartkówka", "praca klasowa", "zebranie", "egzamin"]):
+            if any(
+                k in text.lower()
+                for k in [
+                    "sprawdzian",
+                    "kartkówka",
+                    "praca klasowa",
+                    "zebranie",
+                    "wywiadówka",
+                    "egzamin",
+                    "wycieczka",
+                    "dzień wolny",
+                    "konkurs",
+                    "apel",
+                    "uroczystość",
+                ]
+            ):
                 raw_id = f"event_{text[:60]}"
                 feed_id = SchoolFeedItem.make_id(SchoolItemType.EVENT, raw_id)
                 items.append(
@@ -488,9 +599,66 @@ class LibrusClient:
 
         return items
 
+    def fetch_notes(self) -> List[SchoolFeedItem]:
+        """
+        Fetch conduct remarks and teacher notes (Uwagi i informacje).
+        """
+        if not self.is_authenticated:
+            self.login_sync()
+
+        assert_secure_librus_url(SYNERGIA_NOTES_URL)
+        resp = self.session.get(SYNERGIA_NOTES_URL, timeout=DEFAULT_TIMEOUT)
+        resp.raise_for_status()
+
+        return self._parse_notes_html(resp.text)
+
+    def _parse_notes_html(self, html: str) -> List[SchoolFeedItem]:
+        """Parse Uwagi i informacje HTML table."""
+        soup = BeautifulSoup(html, "html.parser")
+        items: List[SchoolFeedItem] = []
+
+        tables = soup.select("table.decorated")
+        for table in tables:
+            rows = table.find_all("tr", attrs={"class": ["line0", "line1"]})
+            for r in rows:
+                cells = [c.get_text(" ", strip=True) for c in r.find_all("td")]
+                if len(cells) >= 4:
+                    date_str = cells[0]
+                    category = cells[1]
+                    teacher = cells[2]
+                    remark_text = cells[3]
+                    points = cells[4] if len(cells) >= 5 else ""
+
+                    title = f"Uwaga [{category}]: {remark_text[:50]}"
+                    content = f"Kategoria: {category}\nNauczyciel: {teacher}\nData: {date_str}"
+                    if points:
+                        content += f"\nPunkty: {points}"
+                    content += f"\nTreść: {remark_text}"
+
+                    raw_id = f"{date_str}_{teacher}_{remark_text[:50]}"
+                    feed_id = SchoolFeedItem.make_id(SchoolItemType.NOTE, raw_id)
+
+                    items.append(
+                        SchoolFeedItem(
+                            id=feed_id,
+                            item_type=SchoolItemType.NOTE,
+                            title=title,
+                            author=teacher,
+                            date=date_str,
+                            content=content,
+                            metadata={
+                                "category": category,
+                                "points": points,
+                                "source": "synergia_uwagi",
+                            },
+                        )
+                    )
+
+        return items
+
     def collect_all(self, limit_messages: int = 30) -> List[SchoolFeedItem]:
         """
-        Collect all announcements, messages, and events.
+        Collect all announcements, messages, events, homework, and notes.
         Errors on secondary items do not fail the main collection.
         """
         all_items: List[SchoolFeedItem] = []
@@ -526,6 +694,14 @@ class LibrusClient:
             logger.info("Fetched %d homework items", len(homework))
         except Exception as e:
             logger.debug("Homework unavailable: %s", e)
+
+        # 5. Teacher notes / remarks (Uwagi i informacje - best effort)
+        try:
+            notes = self.fetch_notes()
+            all_items.extend(notes)
+            logger.info("Fetched %d teacher notes/remarks", len(notes))
+        except Exception as e:
+            logger.debug("Notes unavailable: %s", e)
 
         return all_items
 

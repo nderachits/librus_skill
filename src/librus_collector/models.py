@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import hashlib
+import re
 from pydantic import BaseModel, Field
 
 
@@ -36,10 +37,12 @@ class SchoolFeedItem(BaseModel):
     def make_id(cls, item_type: SchoolItemType, unique_part: str) -> str:
         """Create a reproducible unique ID."""
         clean_part = unique_part.strip()
-        if len(clean_part) > 64:
-            digest = hashlib.sha256(clean_part.encode("utf-8")).hexdigest()[:16]
-            return f"{item_type.value.lower()}:{digest}"
-        return f"{item_type.value.lower()}:{clean_part}"
+        # Keep clean alphanumeric IDs readable (e.g. message:123456 or msg_999)
+        if re.match(r"^[a-zA-Z0-9_\-\.]{1,40}$", clean_part):
+            return f"{item_type.value.lower()}:{clean_part}"
+        # For multi-word, long, or special-char strings, hash with sha256 (16 hex = 64 bits)
+        digest = hashlib.sha256(clean_part.encode("utf-8")).hexdigest()[:16]
+        return f"{item_type.value.lower()}:{digest}"
 
 
 class SyncResult(BaseModel):

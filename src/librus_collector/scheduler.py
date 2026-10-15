@@ -10,7 +10,26 @@ from typing import Optional
 
 from librus_collector.sync_engine import LibrusSyncEngine
 
+import shutil
+
 logger = logging.getLogger(__name__)
+
+
+def get_uv_path() -> str:
+    """Find absolute path to uv binary, taking macOS Homebrew and standard paths into account."""
+    found = shutil.which("uv")
+    if found:
+        return found
+    common_paths = [
+        "/opt/homebrew/bin/uv",
+        "/usr/local/bin/uv",
+        str(Path.home() / ".cargo/bin/uv"),
+        str(Path.home() / ".local/bin/uv"),
+    ]
+    for p in common_paths:
+        if Path(p).exists():
+            return p
+    return "uv"
 
 
 class DaemonScheduler:
@@ -23,9 +42,12 @@ class DaemonScheduler:
         self._setup_signals()
 
     def _setup_signals(self) -> None:
-        """Register signal handlers for clean exit."""
-        signal.signal(signal.SIGINT, self._handle_exit)
-        signal.signal(signal.SIGTERM, self._handle_exit)
+        """Register signal handlers for clean exit (safe in worker threads)."""
+        try:
+            signal.signal(signal.SIGINT, self._handle_exit)
+            signal.signal(signal.SIGTERM, self._handle_exit)
+        except (ValueError, AttributeError):
+            pass
 
     def _handle_exit(self, signum, frame) -> None:
         logger.info("Received termination signal (%d). Shutting down scheduler gracefully...", signum)
@@ -69,14 +91,16 @@ class DaemonScheduler:
 
 
 def generate_crontab_line(project_dir: Path) -> str:
-    """Generate crontab line for hourly execution."""
+    """Generate crontab line for hourly execution with explicit PATH."""
     abs_dir = project_dir.resolve()
-    return f"0 * * * * cd {abs_dir} && uv run librus-sync run >> {abs_dir}/sync.log 2>&1"
+    uv_bin = get_uv_path()
+    return f"0 * * * * cd {abs_dir} && PATH=/opt/homebrew/bin:/usr/local/bin:$PATH {uv_bin} run librus-sync run >> {abs_dir}/sync.log 2>&1"
 
 
 def generate_launchd_plist(project_dir: Path, label: str = "com.librus.collector") -> str:
-    """Generate macOS launchd plist for hourly execution."""
+    """Generate macOS launchd plist for hourly execution with verified uv path and environment."""
     abs_dir = project_dir.resolve()
+    uv_bin = get_uv_path()
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -85,9 +109,14 @@ def generate_launchd_plist(project_dir: Path, label: str = "com.librus.collector
     <string>{label}</string>
     <key>WorkingDirectory</key>
     <string>{abs_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/uv</string>
+        <string>{uv_bin}</string>
         <string>run</string>
         <string>librus-sync</string>
         <string>run</string>

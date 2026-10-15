@@ -59,18 +59,20 @@ def test_sync_engine_end_to_end(tmp_path):
     assert result.items_new == 2
     assert result.items_synced == 2
     assert result.target_type == "local_file"
+    assert mock_client.populate_message_content.call_count == 1
 
     # Verify content written to local file
     content = fallback_file.read_text(encoding="utf-8")
     assert "Dzień Nauczyciela" in content
     assert "Sprawdzian z geografii" in content
 
-    # Second run with same items: 0 new items
+    # Second run with same items: 0 new items, populate_message_content not called again
     second_result = engine.run_sync()
     assert second_result.success is True
     assert second_result.items_found == 2
     assert second_result.items_new == 0
     assert second_result.items_synced == 0
+    assert mock_client.populate_message_content.call_count == 1
 
 
 def test_sync_engine_handles_exception(tmp_path):

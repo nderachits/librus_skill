@@ -14,6 +14,8 @@ def test_assert_secure_librus_url_valid_domains():
     assert_secure_librus_url("https://api.librus.pl/OAuth/Authorization")
     assert_secure_librus_url("https://synergia.librus.pl/ogloszenia")
     assert_secure_librus_url("https://wiadomosci.librus.pl/api/inbox/messages")
+    assert_secure_librus_url("https://portal.librus.pl/rodzina")
+    assert_secure_librus_url("https://konta.librus.pl/login")
     assert_secure_librus_url("https://sub.synergia.librus.pl/test")
 
 
@@ -58,3 +60,14 @@ def test_sanitize_message():
 
     # Empty secret should not alter message
     assert sanitize_message("Normal log", ["", None]) == "Normal log"
+
+
+def test_sanitize_message_url_encoded_secret():
+    """URL-encoded variants of credentials must also be redacted."""
+    secret = "pass&word@123!"
+    url_encoded = "pass%26word%40123%21"
+    raw_error = f"HTTP 401 error posting body: pass={url_encoded}&user=parent"
+
+    sanitized = sanitize_message(raw_error, [secret])
+    assert url_encoded not in sanitized
+    assert "[REDACTED_CREDENTIAL]" in sanitized

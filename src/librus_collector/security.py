@@ -6,8 +6,8 @@ Guarantees:
 3. Secrets are redacted from logs, string representations, and error messages.
 """
 
-from urllib.parse import urlparse
-from typing import Iterable, Set
+from urllib.parse import quote, quote_plus, urlparse
+from typing import Iterable, Optional, Set
 
 
 class SecurityError(Exception):
@@ -24,6 +24,9 @@ ALLOWED_LIBRUS_HOSTS: Set[str] = {
     "api.librus.pl",
     "synergia.librus.pl",
     "wiadomosci.librus.pl",
+    "portal.librus.pl",
+    "konta.librus.pl",
+    "librus.pl",
 }
 
 
@@ -46,8 +49,11 @@ def assert_secure_librus_url(url: str, check_allowed_hosts: bool = True) -> None
         if not host:
             raise SecurityError(f"Missing hostname in URL: {url}")
         
-        is_allowed = host in ALLOWED_LIBRUS_HOSTS or any(
-            host.endswith("." + allowed) for allowed in ALLOWED_LIBRUS_HOSTS
+        # Verify host is either an exact registered host or an official *.librus.pl domain
+        is_allowed = (
+            host == "librus.pl"
+            or host.endswith(".librus.pl")
+            or host in ALLOWED_LIBRUS_HOSTS
         )
         if not is_allowed:
             raise SecurityError(
@@ -65,10 +71,14 @@ def mask_secret(secret: str) -> str:
     return f"{secret[:1]}***{secret[-1:]}"
 
 
-def sanitize_message(message: str, secrets: Iterable[str]) -> str:
-    """Scrub sensitive secrets from log messages or exceptions."""
+def sanitize_message(message: str, secrets: Iterable[Optional[str]]) -> str:
+    """Scrub sensitive secrets (both plaintext and URL-encoded) from log messages or exceptions."""
     result = message
     for sec in secrets:
-        if sec and len(sec) > 1:
-            result = result.replace(sec, "[REDACTED_CREDENTIAL]")
+        if not sec or not isinstance(sec, str) or len(sec) < 2:
+            continue
+        variants = {sec, quote(sec), quote_plus(sec)}
+        for var in variants:
+            if var in result:
+                result = result.replace(var, "[REDACTED_CREDENTIAL]")
     return result

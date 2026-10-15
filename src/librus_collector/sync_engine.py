@@ -8,7 +8,7 @@ from librus_collector.config import AppConfig, get_config
 from librus_collector.formatter import format_batch_for_doc
 from librus_collector.google_docs import GoogleDocsSync
 from librus_collector.librus_client import LibrusClient
-from librus_collector.models import SyncResult
+from librus_collector.models import SchoolItemType, SyncResult
 from librus_collector.state import SyncStateManager
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,14 @@ class LibrusSyncEngine:
                     doc_id=self.docs_sync.doc_id,
                     target_type="google_doc" if self.docs_sync.is_google_configured else "local_file",
                 )
+
+            # Populate full body content for any newly identified messages
+            for item in new_items:
+                if item.item_type == SchoolItemType.MESSAGE:
+                    try:
+                        client.populate_message_content(item)
+                    except Exception as e:
+                        logger.warning("Could not fetch full body for message %s: %s", item.id, e)
 
             # Format items for Google Doc / NotebookLM
             formatted_text = format_batch_for_doc(new_items, batch_time=start_time)

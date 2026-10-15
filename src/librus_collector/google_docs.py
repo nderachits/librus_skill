@@ -9,6 +9,7 @@ Supports:
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,17 @@ DOCS_SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.file",
 ]
+
+
+def extract_doc_id(raw_doc_id_or_url: Optional[str]) -> Optional[str]:
+    """Extract clean Google Doc ID whether passed as a raw ID or full browser URL."""
+    if not raw_doc_id_or_url:
+        return None
+    val = raw_doc_id_or_url.strip()
+    match = re.search(r"/document/d/([a-zA-Z0-9-_]+)", val)
+    if match:
+        return match.group(1)
+    return val
 
 
 class GoogleDocsSync:
@@ -30,7 +42,8 @@ class GoogleDocsSync:
         token_file: Optional[str] = None,
         local_fallback_file: Optional[str] = None,
     ):
-        self.doc_id = doc_id or os.getenv("GOOGLE_DOC_ID")
+        raw_doc_id = doc_id or os.getenv("GOOGLE_DOC_ID")
+        self.doc_id = extract_doc_id(raw_doc_id)
         self.service_account_file = (
             service_account_file
             or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -53,6 +66,7 @@ class GoogleDocsSync:
             (self.service_account_file and Path(self.service_account_file).exists())
             or (self.client_secrets_file and Path(self.client_secrets_file).exists())
             or (self.token_file and Path(self.token_file).exists())
+            or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         )
         return has_creds and bool(self.doc_id)
 
@@ -96,8 +110,18 @@ class GoogleDocsSync:
 
                 # Persist updated token
                 if creds and self.token_file:
+                    Path(self.token_file).parent.mkdir(parents=True, exist_ok=True)
                     with open(self.token_file, "w", encoding="utf-8") as f:
                         f.write(creds.to_json())
+
+        # 3. Fallback to Application Default Credentials (e.g. gcloud auth application-default login)
+        if not creds:
+            try:
+                import google.auth
+                creds, _ = google.auth.default(scopes=DOCS_SCOPES)
+                logger.info("Loaded Google Application Default Credentials (ADC).")
+            except Exception:
+                pass
 
         if not creds:
             raise RuntimeError(
@@ -139,7 +163,16 @@ class GoogleDocsSync:
 
             # Retrieve the current document to find its end index
             doc = service.documents().get(documentId=self.doc_id).execute()
-            content = doc.get("body", {}).get("content", [])
+            
+            # Support both standard documents and tabbed documents
+            body = doc.get("body")
+            if not body and "tabs" in doc:
+                for tab in doc.get("tabs", []):
+                    tab_body = tab.get("documentTab", {}).get("body")
+                    if tab_body:
+                        body = tab_body
+                        break
+            content = (body or {}).get("content", [])
 
             end_index = 1
             if content:

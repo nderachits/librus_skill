@@ -14,7 +14,7 @@ from librus_collector.librus_client import (
     SYNERGIA_PORTAL_LOGIN_URL,
     WIADOMOSCI_DOMAIN,
 )
-from librus_collector.models import SchoolItemType
+from librus_collector.models import SchoolFeedItem, SchoolItemType
 from librus_collector.security import LibrusAuthError, SecurityError
 
 
@@ -249,3 +249,129 @@ def test_fetch_messages_html_fallback():
     assert msg.title == "Zastępstwo za lekcję fizyki"
     assert msg.author == "Kowalski Tomasz"
     assert msg.date == "2026-10-15 08:00"
+
+
+@responses.activate
+def test_populate_message_content_via_html():
+    """Verify populate_message_content loads full message body from HTML detail page."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    detail_html = """
+    <html>
+        <body>
+            <table class="decorated stretch">
+                <tbody>
+                    <tr><th>Od:</th><td>Kowalski Tomasz</td></tr>
+                    <tr><th>Tytuł:</th><td>Zastępstwo za lekcję fizyki</td></tr>
+                    <tr><th>Wysłano:</th><td>2026-10-15 08:00</td></tr>
+                    <tr>
+                        <th>Treść:</th>
+                        <td class="container-message">
+                            Lekcja fizyki w sali 102 zostaje zastąpiona informatyką w sali 204.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <a href="/pobierz_zalacznik/123">materialy.pdf</a>
+        </body>
+    </html>
+    """
+    responses.add(
+        responses.GET,
+        "https://synergia.librus.pl/wiadomosci/1/5/123456",
+        body=detail_html,
+        status=200,
+    )
+
+    item = SchoolFeedItem(
+        id="message:123456",
+        item_type=SchoolItemType.MESSAGE,
+        title="Zastępstwo za lekcję fizyki",
+        metadata={"link": "/wiadomosci/1/5/123456", "source": "synergia_html"},
+    )
+    client.populate_message_content(item)
+
+    assert "Lekcja fizyki w sali 102" in item.content
+    assert "materialy.pdf" in item.attachments
+
+
+@responses.activate
+def test_populate_message_content_via_api():
+    """Verify populate_message_content decodes base64 body from modern message API."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    b64_content = base64.b64encode("Szczegóły wycieczki klasowej do Krakowa.".encode("utf-8")).decode("utf-8")
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/message/777",
+        json={"data": {"content": b64_content}},
+        status=200,
+    )
+
+    item = SchoolFeedItem(
+        id="message:777",
+        item_type=SchoolItemType.MESSAGE,
+        title="Wycieczka",
+        metadata={"message_id": "777", "source": "wiadomosci_api"},
+    )
+    client.populate_message_content(item)
+
+    assert item.content == "Szczegóły wycieczki klasowej do Krakowa."
+
+
+@responses.activate
+def test_fetch_notes():
+    """Verify fetching teacher conduct remarks (Uwagi i informacje)."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    notes_html = """
+    <table class="decorated stretch">
+        <thead>
+            <tr><td>Data</td><td>Kategoria</td><td>Nauczyciel</td><td>Treść</td><td>Punkty</td></tr>
+        </thead>
+        <tbody>
+            <tr class="line0">
+                <td>2026-10-14</td>
+                <td>Pozytywna</td>
+                <td>Nowak Anna</td>
+                <td>Wzorowy udział w akcji wolontariatu szkolnego.</td>
+                <td>+10</td>
+            </tr>
+        </tbody>
+    </table>
+    """
+    responses.add(
+        responses.GET,
+        "https://synergia.librus.pl/uwagi",
+        body=notes_html,
+        status=200,
+    )
+
+    notes = client.fetch_notes()
+    assert len(notes) == 1
+    note = notes[0]
+    assert note.item_type == SchoolItemType.NOTE
+    assert "Pozytywna" in note.title
+    assert note.author == "Nowak Anna"
+    assert "akcji wolontariatu" in note.content
+    assert note.metadata["points"] == "+10"
+
+
+@responses.activate
+def test_session_redirect_hook_blocks_http():
+    """Verify that requests.Session response hook catches redirects to insecure HTTP."""
+    client = LibrusClient("user", "pass")
+
+    responses.add(
+        responses.GET,
+        "https://synergia.librus.pl/redirect_test",
+        status=302,
+        headers={"Location": "http://evil.com/leak"},
+    )
+
+    with pytest.raises(SecurityError, match="Insecure transport rejected"):
+        client.session.get("https://synergia.librus.pl/redirect_test")
+

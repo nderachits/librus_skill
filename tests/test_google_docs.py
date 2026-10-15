@@ -71,3 +71,59 @@ def test_google_docs_mocked_api_append(tmp_path):
     insert_req = requests_sent[0]["insertText"]
     assert insert_req["location"]["index"] == 149
     assert insert_req["text"] == "New content to append"
+
+
+def test_extract_doc_id():
+    """Verify document ID is extracted from raw ID or full browser URL."""
+    from librus_collector.google_docs import extract_doc_id
+
+    # Raw ID
+    assert extract_doc_id("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms") == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+    # Full edit URL
+    assert extract_doc_id("https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit") == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+    # URL with fragment/params
+    assert extract_doc_id("https://docs.google.com/document/d/my-doc_123/edit?usp=sharing#heading=h.123") == "my-doc_123"
+    # Empty
+    assert extract_doc_id("") is None
+    assert extract_doc_id(None) is None
+
+
+def test_google_docs_tabbed_document(tmp_path):
+    """Verify document with tabs structure is parsed correctly."""
+    sync = GoogleDocsSync(
+        doc_id="tabbed_doc_123",
+        local_fallback_file=str(tmp_path / "fallback.md"),
+    )
+
+    mock_service = MagicMock()
+    mock_docs = MagicMock()
+    mock_service.documents.return_value = mock_docs
+
+    # Mock response with tabs instead of top-level body
+    mock_get = MagicMock()
+    mock_get.execute.return_value = {
+        "tabs": [
+            {
+                "documentTab": {
+                    "body": {
+                        "content": [{"endIndex": 220}]
+                    }
+                }
+            }
+        ]
+    }
+    mock_docs.get.return_value = mock_get
+
+    mock_batch = MagicMock()
+    mock_batch.execute.return_value = {"replies": []}
+    mock_docs.batchUpdate.return_value = mock_batch
+
+    sync._service = mock_service
+    sync.__class__.is_google_configured = property(lambda self: True)
+
+    res = sync.append_text("Content for tabbed doc")
+    assert res["status"] == "success"
+    call_kwargs = mock_docs.batchUpdate.call_args[1]
+    insert_req = call_kwargs["body"]["requests"][0]["insertText"]
+    assert insert_req["location"]["index"] == 219
+

@@ -15,13 +15,11 @@ TYPE_LABELS = {
 
 
 def format_single_item(item: SchoolFeedItem) -> str:
-    """Format a single school feed item into a structured text block."""
+    """Format a single school feed item into a structured Markdown block optimized for NotebookLM."""
     label = TYPE_LABELS.get(item.item_type, item.item_type.value)
     
     lines = [
-        f"══════════════════════════════════════════════════════════════════════",
-        f"[{label}] {item.title}",
-        f"══════════════════════════════════════════════════════════════════════",
+        f"## [{label}] {item.title}",
     ]
 
     if item.date:
@@ -37,10 +35,10 @@ def format_single_item(item: SchoolFeedItem) -> str:
         lines.append(f"• Źródło / Source: {source}")
 
     lines.append("")
-    lines.append("TREŚĆ / CONTENT:")
+    lines.append("### Treść / Content:")
     lines.append(item.content.strip() if item.content else "(Brak treści / No body text)")
     lines.append("")
-    lines.append("──────────────────────────────────────────────────────────────────────")
+    lines.append("---")
     lines.append("")
 
     return "\n".join(lines)
@@ -56,9 +54,9 @@ def format_batch_for_doc(items: List[SchoolFeedItem], batch_time: Optional[datet
 
     header = [
         f"\n\n",
-        f"######################################################################",
+        f"# ══════════════════════════════════════════════════════════════════════",
         f"# LIBRUS UPDATE SYNC: {ts_str} ({len(items)} new items)",
-        f"######################################################################\n\n",
+        f"# ══════════════════════════════════════════════════════════════════════\n\n",
     ]
 
     item_blocks = [format_single_item(it) for it in items]

@@ -88,6 +88,7 @@ class SyncStateManager:
 
         temp_path = self.path.with_suffix(".tmp")
         try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             temp_path.replace(self.path)
