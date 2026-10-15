@@ -1,0 +1,74 @@
+"""Security and credential safety safeguards.
+
+Guarantees:
+1. Credentials are NEVER transmitted unencrypted (only TLS/HTTPS).
+2. Credentials are NEVER transmitted to any host other than official Librus domains.
+3. Secrets are redacted from logs, string representations, and error messages.
+"""
+
+from urllib.parse import urlparse
+from typing import Iterable, Set
+
+
+class SecurityError(Exception):
+    """Raised when an operation violates security policy."""
+    pass
+
+
+class LibrusAuthError(Exception):
+    """Raised when authentication with Librus fails."""
+    pass
+
+
+ALLOWED_LIBRUS_HOSTS: Set[str] = {
+    "api.librus.pl",
+    "synergia.librus.pl",
+    "wiadomosci.librus.pl",
+}
+
+
+def assert_secure_librus_url(url: str, check_allowed_hosts: bool = True) -> None:
+    """
+    Ensure the target URL is encrypted via HTTPS and points to an authorized Librus domain.
+    
+    Raises:
+        SecurityError: If url is not HTTPS or points to an unauthorized host.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise SecurityError(
+            f"Insecure transport rejected: {parsed.scheme}://. "
+            "Librus credentials and session data must ONLY be transmitted over encrypted HTTPS."
+        )
+
+    host = (parsed.hostname or "").lower()
+    if check_allowed_hosts:
+        if not host:
+            raise SecurityError(f"Missing hostname in URL: {url}")
+        
+        is_allowed = host in ALLOWED_LIBRUS_HOSTS or any(
+            host.endswith("." + allowed) for allowed in ALLOWED_LIBRUS_HOSTS
+        )
+        if not is_allowed:
+            raise SecurityError(
+                f"Unauthorized host '{host}'! "
+                f"Credentials must never be sent outside official Librus domains: {ALLOWED_LIBRUS_HOSTS}."
+            )
+
+
+def mask_secret(secret: str) -> str:
+    """Return a masked representation of a sensitive string."""
+    if not secret:
+        return ""
+    if len(secret) <= 4:
+        return "****"
+    return f"{secret[:1]}***{secret[-1:]}"
+
+
+def sanitize_message(message: str, secrets: Iterable[str]) -> str:
+    """Scrub sensitive secrets from log messages or exceptions."""
+    result = message
+    for sec in secrets:
+        if sec and len(sec) > 1:
+            result = result.replace(sec, "[REDACTED_CREDENTIAL]")
+    return result
