@@ -74,3 +74,43 @@ def test_history_capping(tmp_path):
 
     assert len(manager.history) == 1000
     assert len(manager.synced_ids) == 1050
+
+
+def test_clean_history(tmp_path):
+    """Verify clean_history deduplicates duplicate entries from state file."""
+    state_file = tmp_path / ".test_state.json"
+    manager = SyncStateManager(str(state_file))
+
+    item = SchoolFeedItem(id="msg:1", item_type=SchoolItemType.MESSAGE, title="Msg 1")
+    manager.mark_synced([item])
+
+    # Manually inject duplicate history entry (like what prior force runs did)
+    manager.history.append({
+        "id": "msg:1",
+        "type": "MESSAGE",
+        "title": "Msg 1",
+        "synced_at": "2026-10-15T12:00:00+00:00",
+    })
+    manager._save()
+    assert len(manager.history) == 2
+
+    removed = manager.clean_history()
+    assert removed == 1
+    assert len(manager.history) == 1
+
+    # Second call returns 0
+    assert manager.clean_history() == 0
+
+
+def test_mark_synced_prevents_duplicate_history_entries(tmp_path):
+    """Verify mark_synced does not add duplicate records to history when items list contains duplicate IDs."""
+    state_file = tmp_path / ".test_state.json"
+    manager = SyncStateManager(str(state_file))
+
+    item1 = SchoolFeedItem(id="event:duplicate", item_type=SchoolItemType.EVENT, title="Event A")
+    item2 = SchoolFeedItem(id="event:duplicate", item_type=SchoolItemType.EVENT, title="Event B")
+
+    manager.mark_synced([item1, item2])
+    assert len(manager.synced_ids) == 1
+    assert len(manager.history) == 1
+

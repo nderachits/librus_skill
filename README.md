@@ -92,7 +92,7 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 > 1. In Google Cloud Console, enable **Google Docs API** and create a **Service Account**.
 > 2. Download the JSON key file as `service_account.json`.
 > 3. Open your Google Doc in your browser and click **Share** -> add the Service Account's email address with **Editor** permission.
-> 4. Alternatively, if no Google credentials are provided, the collector automatically falls back to appending entries to `librus_updates.md` locally.
+> 4. `librus_updates.md` is always maintained as a clean local mirror containing the exact same data as the Google Doc (both when Google Docs is configured and in local fallback mode).
 
 ---
 
@@ -101,6 +101,26 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 ### Run on demand:
 ```bash
 uv run librus-sync run
+```
+
+### Force resync all items (clean rewrite without duplicates):
+```bash
+uv run librus-sync run --force
+```
+
+### Clean duplicate batches from local file:
+```bash
+uv run librus-sync clean
+```
+
+### Pull and mirror directly from Google Doc:
+```bash
+uv run librus-sync pull
+```
+
+### Push local mirror file to Google Doc:
+```bash
+uv run librus-sync push
 ```
 
 ### Run continuous daemon (every hour):

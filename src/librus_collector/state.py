@@ -52,7 +52,7 @@ class SyncStateManager:
         )
         return new_items
 
-    def mark_synced(self, items: List[SchoolFeedItem]) -> None:
+    def mark_synced(self, items: List[SchoolFeedItem], reset: bool = False) -> None:
         """Record items as synced and save atomically to disk."""
         if not items:
             return
@@ -60,22 +60,48 @@ class SyncStateManager:
         now_iso = datetime.now(timezone.utc).isoformat()
         self.last_sync_timestamp = now_iso
 
+        if reset:
+            self.synced_ids = set()
+            self.history = []
+
         for item in items:
+            if item.id not in self.synced_ids:
+                self.history.append({
+                    "id": item.id,
+                    "type": item.item_type.value,
+                    "title": item.title,
+                    "author": item.author,
+                    "date": item.date,
+                    "synced_at": now_iso,
+                })
             self.synced_ids.add(item.id)
-            self.history.append({
-                "id": item.id,
-                "type": item.item_type.value,
-                "title": item.title,
-                "author": item.author,
-                "date": item.date,
-                "synced_at": now_iso,
-            })
 
         # Keep history capped at 1000 latest entries to manage file size
         if len(self.history) > 1000:
             self.history = self.history[-1000:]
 
         self._save()
+
+    def clean_history(self) -> int:
+        """
+        Deduplicate entries in history so that each item ID only occurs once.
+        Keeps the latest entry for each item ID.
+        Returns the number of duplicate entries removed.
+        """
+        seen = set()
+        unique_history = []
+        for entry in reversed(self.history):
+            item_id = entry.get("id")
+            if item_id and item_id not in seen:
+                seen.add(item_id)
+                unique_history.append(entry)
+        unique_history.reverse()
+        removed = len(self.history) - len(unique_history)
+        if removed > 0:
+            self.history = unique_history
+            self._save()
+            logger.info("Cleaned %d duplicate entries from history in %s", removed, self.path)
+        return removed
 
     def _save(self) -> None:
         """Save state to file atomically using a temporary file."""

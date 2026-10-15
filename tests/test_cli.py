@@ -69,3 +69,74 @@ def test_cli_run_force():
 
         mock_engine.run_sync.assert_called_once_with(force=True)
 
+
+def test_cli_clean(capsys, tmp_path):
+    """Test CLI clean command."""
+    local_file = tmp_path / "updates.md"
+    local_file.write_text("Sample content", encoding="utf-8")
+    state_file = tmp_path / ".state.json"
+
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.GoogleDocsSync") as mock_docs_cls, \
+         patch("librus_collector.cli.SyncStateManager") as mock_state_cls:
+        mock_cfg.return_value.local_export_path = str(local_file)
+        mock_cfg.return_value.state_file_path = str(state_file)
+        mock_docs = mock_docs_cls.return_value
+        mock_docs.clean_local_file.return_value = 500
+        mock_state = mock_state_cls.return_value
+        mock_state.clean_history.return_value = 10
+
+        with patch("sys.argv", ["librus-sync", "clean"]):
+            main()
+
+    captured = capsys.readouterr()
+    assert "Cleaned duplicate batches from" in captured.out
+    assert "500 redundant characters" in captured.out
+    assert "Cleaned 10 duplicate history entries" in captured.out
+
+
+def test_cli_pull(capsys, tmp_path):
+    """Test CLI pull command when Google Docs is configured."""
+    local_file = tmp_path / "updates.md"
+
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.GoogleDocsSync") as mock_docs_cls:
+        mock_cfg.return_value.local_export_path = str(local_file)
+        mock_cfg.return_value.google_doc_id = "doc_xyz"
+        mock_docs = mock_docs_cls.return_value
+        mock_docs.is_google_configured = True
+        mock_docs.doc_id = "doc_xyz"
+        mock_docs.sync_local_mirror_from_google.return_value = "Content from Google Doc"
+
+        with patch("sys.argv", ["librus-sync", "pull"]):
+            main()
+
+    captured = capsys.readouterr()
+    assert "Successfully synchronized local mirror from Google Doc" in captured.out
+    assert "doc_xyz" in captured.out
+
+
+def test_cli_push(capsys, tmp_path):
+    """Test CLI push command when Google Docs is configured."""
+    local_file = tmp_path / "updates.md"
+
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.GoogleDocsSync") as mock_docs_cls:
+        mock_cfg.return_value.local_export_path = str(local_file)
+        mock_cfg.return_value.google_doc_id = "doc_xyz"
+        mock_docs = mock_docs_cls.return_value
+        mock_docs.is_google_configured = True
+        mock_docs.doc_id = "doc_xyz"
+        mock_docs.push_local_mirror_to_google.return_value = {
+            "status": "success",
+            "doc_url": "https://docs.google.com/document/d/doc_xyz/edit",
+        }
+
+        with patch("sys.argv", ["librus-sync", "push"]):
+            main()
+
+    captured = capsys.readouterr()
+    assert "Successfully pushed local mirror to Google Doc" in captured.out
+    assert "doc_xyz" in captured.out
+
+

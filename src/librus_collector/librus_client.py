@@ -638,7 +638,7 @@ class LibrusClient:
                     "uroczystość",
                 ]
             ):
-                raw_id = f"event_{text[:60]}"
+                raw_id = f"event_{text.strip()}"
                 feed_id = SchoolFeedItem.make_id(SchoolItemType.EVENT, raw_id)
                 items.append(
                     SchoolFeedItem(

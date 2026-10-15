@@ -131,8 +131,13 @@ def test_sync_engine_force_resync(tmp_path):
     res2 = engine.run_sync(force=False)
     assert res2.items_synced == 0
 
-    # Forced sync resyncs the item
+    # Forced sync resyncs the item and rewrites local file without duplication
     res3 = engine.run_sync(force=True)
     assert res3.items_synced == 1
     assert mock_client.populate_message_content.call_count == 2
+
+    # Verify fallback file was rewritten without duplicates
+    content = fallback_file.read_text(encoding="utf-8")
+    assert content.count("Ważne ogłoszenie") == 1
+    assert content.count("LIBRUS UPDATE SYNC") == 1
 

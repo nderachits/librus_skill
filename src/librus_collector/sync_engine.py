@@ -89,12 +89,12 @@ class LibrusSyncEngine:
             # Format items for Google Doc / NotebookLM
             formatted_text = format_batch_for_doc(new_items, batch_time=start_time)
 
-            # Append to Google Doc (or fallback)
-            append_res = self.docs_sync.append_text(formatted_text)
+            # Write/append to Google Doc (and maintain exact local mirror)
+            append_res = self.docs_sync.append_text(formatted_text, rewrite=force)
             target_type = append_res.get("target", "unknown")
 
-            # Persist state
-            self.state_manager.mark_synced(new_items)
+            # Persist state (reset history if forced)
+            self.state_manager.mark_synced(new_items, reset=force)
             logger.info("Successfully synced %d new items to %s", len(new_items), target_type)
 
             return SyncResult(

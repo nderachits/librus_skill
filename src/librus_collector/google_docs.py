@@ -142,21 +142,28 @@ class GoogleDocsSync:
         logger.info("Created new Google Doc '%s' with ID: %s", title, doc_id)
         return doc_id
 
-    def append_text(self, text: str) -> Dict[str, Any]:
+    def append_text(self, text: str, rewrite: bool = False) -> Dict[str, Any]:
         """
-        Append text to the configured Google Doc.
-        If Google Docs is not configured or fails, falls back to the local markdown file.
+        Write or append text to the configured Google Doc.
+        - If rewrite is True (e.g. forced resync), replaces entire doc content.
+        - If rewrite is False (incremental sync), appends text to the end.
+        In all cases, the local file (e.g. librus_updates.md) is kept updated as
+        an exact mirror of the document content.
         """
         if not text:
             return {"status": "noop", "message": "No text to append."}
 
+        action_name = "rewrite" if rewrite else "append"
+        text_to_insert = text.lstrip("\n") if rewrite else text
+
         # Check if Google Docs is available
         if not self.doc_id or not self.is_google_configured:
             logger.info(
-                "Google Docs not configured or missing credentials. Appending to local file: %s",
+                "Google Docs not configured or missing credentials. %s to local file: %s",
+                "Rewriting" if rewrite else "Appending",
                 self.local_fallback_file,
             )
-            return self._append_local(text)
+            return self._write_local(text_to_insert if rewrite else text, rewrite=rewrite)
 
         try:
             service = self.get_service()
@@ -166,11 +173,13 @@ class GoogleDocsSync:
             
             # Support both standard documents and tabbed documents
             body = doc.get("body")
+            tab_id = None
             if not body and "tabs" in doc:
                 for tab in doc.get("tabs", []):
                     tab_body = tab.get("documentTab", {}).get("body")
                     if tab_body:
                         body = tab_body
+                        tab_id = tab.get("tabProperties", {}).get("tabId") or tab.get("tabId")
                         break
             content = (body or {}).get("content", [])
 
@@ -178,17 +187,43 @@ class GoogleDocsSync:
             if content:
                 end_index = content[-1].get("endIndex", 1)
 
-            # Insert at the end (subtract 1 for the mandatory trailing newline index)
-            insert_location = max(1, end_index - 1)
-
-            requests_payload = [
-                {
+            requests_payload = []
+            if rewrite:
+                # Delete all existing content from index 1 to end_index - 1
+                if end_index > 2:
+                    del_range = {
+                        "startIndex": 1,
+                        "endIndex": end_index - 1,
+                    }
+                    if tab_id:
+                        del_range["tabId"] = tab_id
+                    requests_payload.append({
+                        "deleteContentRange": {
+                            "range": del_range
+                        }
+                    })
+                # Insert replacement text at index 1
+                insert_loc = {"index": 1}
+                if tab_id:
+                    insert_loc["tabId"] = tab_id
+                requests_payload.append({
                     "insertText": {
-                        "location": {"index": insert_location},
+                        "location": insert_loc,
+                        "text": text_to_insert,
+                    }
+                })
+            else:
+                # Insert at the end (subtract 1 for the mandatory trailing newline index)
+                insert_location = max(1, end_index - 1)
+                insert_loc = {"index": insert_location}
+                if tab_id:
+                    insert_loc["tabId"] = tab_id
+                requests_payload.append({
+                    "insertText": {
+                        "location": insert_loc,
                         "text": text,
                     }
-                }
-            ]
+                })
 
             result = (
                 service.documents()
@@ -196,30 +231,148 @@ class GoogleDocsSync:
                 .execute()
             )
 
-            logger.info("Successfully appended %d characters to Google Doc %s", len(text), self.doc_id)
+            # Keep local mirror file in exact sync with Google Doc
+            if rewrite:
+                self._write_local(text_to_insert, rewrite=True)
+            else:
+                if not self.local_fallback_file.exists() or self.local_fallback_file.stat().st_size == 0:
+                    # Mirror was missing or empty: reconstruct full mirror from doc before update + new text
+                    existing_text = self._extract_text_from_doc(doc)
+                    full_text = existing_text.rstrip("\n") + "\n\n" + text.lstrip("\n")
+                    self._write_local(full_text.strip() + "\n", rewrite=True)
+                else:
+                    self._write_local(text, rewrite=False)
+
+            logger.info(
+                "Successfully %s %d characters to Google Doc %s (mirrored to %s)",
+                "rewrote" if rewrite else "appended",
+                len(text),
+                self.doc_id,
+                self.local_fallback_file,
+            )
             return {
                 "status": "success",
                 "target": "google_doc",
                 "doc_id": self.doc_id,
                 "doc_url": f"https://docs.google.com/document/d/{self.doc_id}/edit",
                 "result": result,
+                "local_mirror": str(self.local_fallback_file),
+                "mode": action_name,
             }
 
         except Exception as e:
-            logger.error("Failed to append to Google Doc %s: %s. Falling back to local file.", self.doc_id, e)
-            local_res = self._append_local(text)
+            logger.error(
+                "Failed to %s Google Doc %s: %s. Falling back to local file.",
+                action_name,
+                self.doc_id,
+                e,
+            )
+            local_res = self._write_local(text_to_insert if rewrite else text, rewrite=rewrite)
             local_res["google_error"] = str(e)
             return local_res
 
-    def _append_local(self, text: str) -> Dict[str, Any]:
-        """Append formatted text to local fallback file."""
+    def _write_local(self, text: str, rewrite: bool = False) -> Dict[str, Any]:
+        """Write formatted text to local fallback/mirror file."""
         self.local_fallback_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.local_fallback_file, "a", encoding="utf-8") as f:
+        mode = "w" if rewrite else "a"
+        with open(self.local_fallback_file, mode, encoding="utf-8") as f:
             f.write(text)
 
-        logger.info("Appended %d characters to local fallback file: %s", len(text), self.local_fallback_file)
+        action_verb = "Rewrote" if rewrite else "Appended"
+        target_desc = "local mirror" if self.is_google_configured else "local fallback file"
+        logger.info(
+            "%s %d characters to %s: %s",
+            action_verb,
+            len(text),
+            target_desc,
+            self.local_fallback_file,
+        )
         return {
             "status": "success",
             "target": "local_file",
             "file_path": str(self.local_fallback_file),
+            "mode": "rewrite" if rewrite else "append",
         }
+
+    def _append_local(self, text: str) -> Dict[str, Any]:
+        """Append formatted text to local fallback file (backwards compatibility)."""
+        return self._write_local(text, rewrite=False)
+
+    def _extract_text_from_doc(self, doc: dict) -> str:
+        """Extract plain text runs from a Google Docs document structure."""
+        body = doc.get("body")
+        if not body and "tabs" in doc:
+            for tab in doc.get("tabs", []):
+                tab_body = tab.get("documentTab", {}).get("body")
+                if tab_body:
+                    body = tab_body
+                    break
+        content = (body or {}).get("content", [])
+        return self._extract_text_from_structural_elements(content)
+
+    def _extract_text_from_structural_elements(self, elements: List[dict]) -> str:
+        """Recursively extract plain text from paragraphs, tables, and nested structures."""
+        text_pieces = []
+        for el in elements:
+            para = el.get("paragraph")
+            if para:
+                for elem in para.get("elements", []):
+                    tr = elem.get("textRun")
+                    if tr and "content" in tr:
+                        text_pieces.append(tr["content"])
+            table = el.get("table")
+            if table:
+                for row in table.get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        cell_content = cell.get("content", [])
+                        text_pieces.append(self._extract_text_from_structural_elements(cell_content))
+        return "".join(text_pieces)
+
+    def read_document_text(self) -> str:
+        """Fetch all text content from the configured Google Doc."""
+        if not self.doc_id or not self.is_google_configured:
+            raise RuntimeError("Google Docs is not configured or missing credentials.")
+        service = self.get_service()
+        doc = service.documents().get(documentId=self.doc_id).execute()
+        return self._extract_text_from_doc(doc)
+
+    def sync_local_mirror_from_google(self) -> str:
+        """Download latest Google Doc content and write directly to local mirror file."""
+        text = self.read_document_text()
+        self.local_fallback_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.local_fallback_file, "w", encoding="utf-8") as f:
+            f.write(text)
+        logger.info(
+            "Synchronized local mirror %s from Google Doc %s (%d chars)",
+            self.local_fallback_file,
+            self.doc_id,
+            len(text),
+        )
+        return text
+
+    def push_local_mirror_to_google(self) -> Dict[str, Any]:
+        """Upload current local mirror file content to the configured Google Doc (rewrite)."""
+        if not self.doc_id or not self.is_google_configured:
+            raise RuntimeError("Google Docs is not configured or missing credentials.")
+        if not self.local_fallback_file.exists():
+            raise FileNotFoundError(f"Local mirror file not found: {self.local_fallback_file}")
+        text = self.local_fallback_file.read_text(encoding="utf-8")
+        if not text.strip():
+            raise ValueError(f"Local mirror file is empty: {self.local_fallback_file}")
+        return self.append_text(text, rewrite=True)
+
+    def clean_local_file(self) -> int:
+        """
+        Deduplicate any repeated batches or items in local fallback/mirror file.
+        Returns the number of duplicate characters removed.
+        """
+        if not self.local_fallback_file.exists():
+            return 0
+        from librus_collector.formatter import clean_markdown_batches
+        original_text = self.local_fallback_file.read_text(encoding="utf-8")
+        cleaned_text = clean_markdown_batches(original_text)
+        saved = max(0, len(original_text) - len(cleaned_text))
+        if cleaned_text != original_text:
+            self.local_fallback_file.write_text(cleaned_text, encoding="utf-8")
+            logger.info("Cleaned %d duplicate characters from %s", saved, self.local_fallback_file)
+        return saved

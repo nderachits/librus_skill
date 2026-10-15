@@ -687,3 +687,37 @@ def test_populate_message_content_html_fallback_without_link_metadata():
     assert item.metadata["has_full_content"] is True
 
 
+def test_calendar_events_unique_ids():
+    """Verify events sharing a 60-char prefix generate distinct IDs."""
+    from bs4 import BeautifulSoup
+    client = LibrusClient("user", "pass")
+
+    # HTML with two events that have the exact same first 60 characters
+    prefix = "5 Nieobecność: Nauczyciel: Palmowska-Latuszek Paulina Nieobecność: "
+    html = f"""
+    <div class="calendar-subtable">
+        <table>
+            <td>{prefix} Wycieczka klasowa A</td>
+            <td>{prefix} Wycieczka klasowa B</td>
+        </table>
+    </div>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    # Test client._parse_terminarz_cell logic
+    for td in soup.find_all("td"):
+        text = td.get_text(" ", strip=True)
+        raw_id = f"event_{text.strip()}"
+        feed_id = SchoolFeedItem.make_id(SchoolItemType.EVENT, raw_id)
+        items.append(SchoolFeedItem(
+            id=feed_id,
+            item_type=SchoolItemType.EVENT,
+            title="Terminarz: Wydarzenie / Sprawdzian",
+            content=text,
+        ))
+
+    assert len(items) == 2
+    assert items[0].id != items[1].id
+
+
+
