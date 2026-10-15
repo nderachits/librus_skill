@@ -90,3 +90,49 @@ def test_sync_engine_handles_exception(tmp_path):
 
     assert res.success is False
     assert "Connection dropped" in res.error_message
+
+
+def test_sync_engine_force_resync(tmp_path):
+    """Verify force=True bypasses deduplication and resyncs all items."""
+    state_file = tmp_path / "state.json"
+    fallback_file = tmp_path / "updates.md"
+
+    config = AppConfig(
+        librus_login="test_user",
+        librus_password="test_password",
+        local_export_path=str(fallback_file),
+        state_file_path=str(state_file),
+    )
+
+    state_mgr = SyncStateManager(str(state_file))
+    docs_sync = GoogleDocsSync(local_fallback_file=str(fallback_file))
+
+    mock_client = MagicMock()
+    item = SchoolFeedItem(
+        id="msg:100",
+        item_type=SchoolItemType.MESSAGE,
+        title="Ważne ogłoszenie",
+        content="Podgląd",
+    )
+    mock_client.collect_all.return_value = [item]
+
+    engine = LibrusSyncEngine(
+        config=config,
+        librus_client=mock_client,
+        state_manager=state_mgr,
+        docs_sync=docs_sync,
+    )
+
+    # First sync
+    res1 = engine.run_sync()
+    assert res1.items_synced == 1
+
+    # Normal second sync has 0 items
+    res2 = engine.run_sync(force=False)
+    assert res2.items_synced == 0
+
+    # Forced sync resyncs the item
+    res3 = engine.run_sync(force=True)
+    assert res3.items_synced == 1
+    assert mock_client.populate_message_content.call_count == 2
+

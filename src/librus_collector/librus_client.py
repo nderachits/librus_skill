@@ -173,12 +173,24 @@ class LibrusClient:
             # Step 5: MultiDomainLogon bootstrap for wiadomości API (best effort)
             try:
                 assert_secure_librus_url(SYNERGIA_MESSAGES_BOOTSTRAP_URL)
-                bootstrap_resp = self.session.get(
-                    SYNERGIA_MESSAGES_BOOTSTRAP_URL,
-                    timeout=DEFAULT_TIMEOUT,
-                )
+                bootstrap_url = SYNERGIA_MESSAGES_BOOTSTRAP_URL
+                for _ in range(5):
+                    b_resp = self.session.get(
+                        bootstrap_url,
+                        allow_redirects=False,
+                        timeout=DEFAULT_TIMEOUT,
+                    )
+                    loc = b_resp.headers.get("Location")
+                    if not loc:
+                        break
+                    target = urljoin(b_resp.url, loc)
+                    # Upgrade authorized Librus redirects to HTTPS if server returned http://
+                    if target.startswith("http://") and ".librus.pl" in target:
+                        target = "https://" + target[len("http://"):]
+                    assert_secure_librus_url(target)
+                    bootstrap_url = target
             except Exception as e:
-                logger.warning("Messages bootstrap warning: %s", e)
+                logger.debug("Messages bootstrap notice: %s", e)
 
             self.is_authenticated = True
             logger.info("Successfully authenticated with Librus as '%s'", self.login)
@@ -360,51 +372,67 @@ class LibrusClient:
             if len(cells) < 5:
                 continue
 
-            # Row structure usually:
-            # [checkbox, attachment_icon, author, title_link, date, unread/trash]
-            # Find the title and link
-            title_cell = None
+            # Standard Synergia inbox table columns:
+            # cells[0]: checkbox
+            # cells[1]: attachment icon
+            # cells[2]: sender / author (contains link to message)
+            # cells[3]: topic / subject (contains link to message)
+            # cells[4]: send date
+            # cells[5]: delete / action button
+            has_attachment = bool(cells[1].find("img")) if len(cells) > 1 else False
+
+            # Subject / Title from cell 3 (or cell with title link)
+            title = ""
             link_href = ""
-            author_cell = None
-            date_cell = None
-
-            for c in cells:
-                a_tag = c.find("a")
-                if a_tag and "wiadomosci" in a_tag.get("href", ""):
-                    title_cell = c
-                    link_href = a_tag["href"]
-                    break
-
-            if not title_cell:
-                # Standard positions fallback
-                if len(cells) >= 6:
-                    author_cell = cells[2]
-                    title_cell = cells[3]
-                    date_cell = cells[4]
+            if len(cells) >= 4:
+                title_a = cells[3].find("a")
+                if title_a:
+                    title = title_a.get_text(strip=True)
+                    link_href = title_a.get("href", "")
                 else:
-                    continue
-            else:
-                idx = cells.index(title_cell)
-                if idx > 0:
-                    author_cell = cells[idx - 1]
-                if idx + 1 < len(cells):
-                    date_cell = cells[idx + 1]
+                    title = cells[3].get_text(strip=True)
 
-            title = title_cell.get_text(strip=True) if title_cell else "Bez tematu"
-            author = author_cell.get_text(strip=True) if author_cell else ""
-            date_str = date_cell.get_text(strip=True) if date_cell else ""
+            # Sender / Author from cell 2
+            author = ""
+            if len(cells) >= 3:
+                author_a = cells[2].find("a")
+                if author_a:
+                    author = author_a.get_text(strip=True)
+                    if not link_href:
+                        link_href = author_a.get("href", "")
+                else:
+                    author = cells[2].get_text(strip=True)
 
-            # Extract message ID from link if present
-            # e.g., /wiadomosci/1/5/123456
+            # Fallback if cells were not in standard positions
+            if not title:
+                for c in cells:
+                    a_tag = c.find("a")
+                    if a_tag and "wiadomosci" in a_tag.get("href", ""):
+                        title = a_tag.get_text(strip=True)
+                        link_href = a_tag.get("href", "")
+                        break
+            if not title:
+                title = "Bez tematu"
+
+            # Date from cell 4
+            date_str = cells[4].get_text(strip=True) if len(cells) >= 5 else ""
+
+            # Extract numeric message ID from link if present
+            # e.g., /wiadomosci/1/5/1254708/f0 or /wiadomosci/1/5/1254708
             msg_id = ""
             if link_href:
-                parts = [p for p in link_href.split("/") if p]
-                if parts:
-                    msg_id = parts[-1]
+                m = re.search(r"/wiadomosci/(?:[^/]+/)*(\d+)", link_href)
+                if m:
+                    msg_id = m.group(1)
+                else:
+                    parts = [p for p in link_href.split("/") if p and p != "f0"]
+                    if parts:
+                        msg_id = parts[-1]
             if not msg_id:
                 msg_id = f"{author}_{title}_{date_str}"
 
             feed_id = SchoolFeedItem.make_id(SchoolItemType.MESSAGE, msg_id)
+            attachments = ["Załącznik dołączony do wiadomości"] if has_attachment else []
 
             items.append(
                 SchoolFeedItem(
@@ -414,6 +442,7 @@ class LibrusClient:
                     author=author,
                     date=date_str,
                     content=f"Wiadomość z systemu Synergia: {title}",
+                    attachments=attachments,
                     metadata={
                         "link": link_href,
                         "message_id": msg_id,
@@ -494,8 +523,16 @@ class LibrusClient:
                     logger.debug("API message detail fetch failed for %s: %s", endpoint_tpl, e)
 
         # 2. Try HTML scraping of the specific message view
+        # Try explicit link or default Synergia URL pattern for numeric msg_id
+        html_links = []
         if link:
-            target_url = urljoin(SYNERGIA_BASE_URL, link)
+            html_links.append(link)
+        if msg_id and msg_id.isdigit():
+            html_links.append(f"/wiadomosci/1/5/{msg_id}/f0")
+            html_links.append(f"/wiadomosci/1/5/{msg_id}")
+
+        for h_link in html_links:
+            target_url = urljoin(SYNERGIA_BASE_URL, h_link)
             try:
                 assert_secure_librus_url(target_url)
                 resp = self.session.get(target_url, timeout=DEFAULT_TIMEOUT)
@@ -505,8 +542,17 @@ class LibrusClient:
                         item.content = body_text
                         item.metadata["has_full_content"] = True
                     if attachments:
-                        item.attachments = list(set(item.attachments + attachments))
-                    return
+                        cleaned = [
+                            a
+                            for a in item.attachments
+                            if a != "Załącznik dołączony do wiadomości"
+                        ]
+                        for att in attachments:
+                            if att not in cleaned:
+                                cleaned.append(att)
+                        item.attachments = cleaned
+                    if item.metadata.get("has_full_content"):
+                        return
             except Exception as e:
                 logger.warning("Failed to fetch HTML message body for %s: %s", target_url, e)
 
@@ -516,8 +562,10 @@ class LibrusClient:
         body_text = ""
         attachments: List[str] = []
 
-        # Synergia puts message body in container-message, wysiwyg, or table cell after Treść
-        content_container = soup.select_one("div.container-message, td.container-message, div.wysiwyg")
+        # Synergia puts message body in container-message-content, container-message, wysiwyg, or table cell after Treść
+        content_container = soup.select_one(
+            "div.container-message-content, div.container-message, td.container-message, div.wysiwyg"
+        )
         if content_container:
             body_text = content_container.get_text("\n", strip=True)
 
@@ -533,7 +581,17 @@ class LibrusClient:
                             body_text = target_cell.get_text("\n", strip=True)
                             break
 
-        for a_tag in soup.select("a[href*='pobierz'], a[href*='zalacznik'], a[href*='attachment']"):
+        # Attachments extraction in Synergia HTML:
+        # 1. Look for file icons in tables (e.g. img[src*='filetype_icons'])
+        for img in soup.select("img[src*='filetype_icons']"):
+            parent_td = img.find_parent("td")
+            if parent_td:
+                fn = parent_td.get_text(strip=True)
+                if fn and fn not in attachments:
+                    attachments.append(fn)
+
+        # 2. Look for download links
+        for a_tag in soup.select("a[href*='pobierz'], a[href*='zalacznik'], a[href*='attachment'], a[onclick*='pobierz_zalacznik']"):
             txt = a_tag.get_text(strip=True)
             if txt and txt not in attachments:
                 attachments.append(txt)
@@ -746,13 +804,40 @@ class LibrusClient:
 
     @staticmethod
     def _decode_message_content(raw: str) -> str:
-        """Decode base64 encoded message content with utf-8 fallback."""
+        """Decode base64 encoded message content with utf-8 fallback and clean markup/XML."""
         if not raw:
             return ""
         try:
             # Check if looks like base64
             decoded = b64decode(raw).decode("utf-8", errors="replace")
-            # If successfully decoded, return decoded text
-            return decoded
         except Exception:
-            return raw
+            decoded = raw
+
+        # Extract content from XML / CDATA wrappers if present
+        # Librus modern API commonly wraps bodies in <Message><Content><![CDATA[...]]></Content><Actions>...</Actions></Message>
+        cdata_match = re.search(r"<!\[CDATA\[(.*?)(?:\]\]>|\Z)", decoded, re.DOTALL)
+        if cdata_match:
+            decoded = cdata_match.group(1)
+        else:
+            content_match = re.search(r"<Content[^>]*>(.*?)(?:<\/Content>|\Z)", decoded, re.DOTALL)
+            if content_match:
+                inner = content_match.group(1)
+                cdata_inner = re.search(r"<!\[CDATA\[(.*?)(?:\]\]>|\Z)", inner, re.DOTALL)
+                decoded = cdata_inner.group(1) if cdata_inner else inner
+
+        # Strip any remaining XML wrapper tags like <Message>, <Actions>, etc.
+        decoded = re.sub(r"<\/?(Message|Content|Actions)[^>]*>", "", decoded)
+
+        # Clean HTML formatting if present (e.g., <br />, <br>, <p>, &nbsp;)
+        if any(k in decoded.lower() for k in ["<br", "<p", "&nbsp;", "&amp;", "&quot;", "&lt;", "&gt;"]):
+            decoded = re.sub(r"<br\s*\/?>", "\n", decoded, flags=re.IGNORECASE)
+            decoded = re.sub(r"<\/p>", "\n\n", decoded, flags=re.IGNORECASE)
+            decoded = re.sub(r"<p[^>]*>", "\n\n", decoded, flags=re.IGNORECASE)
+            decoded = decoded.replace("&nbsp;", " ")
+            decoded = decoded.replace("&amp;", "&")
+            decoded = decoded.replace("&lt;", "<")
+            decoded = decoded.replace("&gt;", ">")
+            decoded = decoded.replace("&quot;", '"')
+            decoded = re.sub(r"\n{3,}", "\n\n", decoded)
+
+        return decoded.strip()

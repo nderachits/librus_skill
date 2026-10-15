@@ -523,3 +523,167 @@ def test_populate_message_content_html_fallback_when_api_fails():
     assert item.content == "Treść z widoku HTML po awarii API"
     assert item.metadata["has_full_content"] is True
 
+
+def test_decode_message_content_xml_cdata_unwrapping():
+    """Verify Librus XML and CDATA blocks are stripped, leaving clean text."""
+    xml_body = (
+        "<Message><Content><![CDATA[\n"
+        "Drodzy Rodzice,\n\n"
+        "Zapraszamy na konkurs.\n"
+        "]]></Content><Actions><Actions/></Actions></Message>"
+    )
+    b64_val = base64.b64encode(xml_body.encode("utf-8")).decode("utf-8")
+    decoded = LibrusClient._decode_message_content(b64_val)
+    assert decoded == "Drodzy Rodzice,\n\nZapraszamy na konkurs."
+    assert "<Message>" not in decoded
+    assert "<![CDATA[" not in decoded
+    assert "</Content>" not in decoded
+
+
+def test_decode_message_content_truncated_cdata_preview():
+    """Verify truncated preview ending inside CDATA is unwrapped without error."""
+    truncated_xml = "<Message><Content><![CDATA[Szanowni Państwo,\nW związku ze zgłoszeniem dziecka do LE"
+    b64_val = base64.b64encode(truncated_xml.encode("utf-8")).decode("utf-8")
+    decoded = LibrusClient._decode_message_content(b64_val)
+    assert decoded == "Szanowni Państwo,\nW związku ze zgłoszeniem dziecka do LE"
+    assert "<![CDATA[" not in decoded
+
+
+def test_decode_message_content_html_tags_and_entities():
+    """Verify HTML tags and entities like <br>, <p>, &nbsp; are converted to plain text."""
+    html_body = "Dzień dobry,<br /><br />Spotkanie odbędzie się w sali.&nbsp;Dziękujemy!<p>Pozdrawiam</p>"
+    b64_val = base64.b64encode(html_body.encode("utf-8")).decode("utf-8")
+    decoded = LibrusClient._decode_message_content(b64_val)
+    assert "Dzień dobry,\n\nSpotkanie odbędzie się w sali. Dziękujemy!\n\nPozdrawiam" in decoded
+    assert "<br" not in decoded
+    assert "&nbsp;" not in decoded
+
+
+def test_parse_messages_html_realistic_synergia_table():
+    """Verify parsing real Synergia HTML inbox where author has anchor, link has /f0 suffix, and attachment icon is present."""
+    client = LibrusClient("user", "pass")
+    html = """
+    <table class="decorated stretch">
+        <tbody>
+            <tr class="line0">
+                <td><input type="checkbox"/></td>
+                <td><img src="/images/clip.png" title="załącznik"/></td>
+                <td><a href="/wiadomosci/1/5/1254708/f0">Kruk-Zabawa Beata (Kruk-Zabawa Beata) [Nauczyciel]</a></td>
+                <td><a href="/wiadomosci/1/5/1254708/f0">Consent for visit to a music school</a></td>
+                <td>2026-10-15 06:13:04</td>
+                <td><a href="javascript:void(0);">Usuń</a></td>
+            </tr>
+            <tr class="line1">
+                <td><input type="checkbox"/></td>
+                <td></td>
+                <td><a href="/wiadomosci/1/5/1207517/f0">Anna Jurczak-Nicpoń</a></td>
+                <td><a href="/wiadomosci/1/5/1207517/f0">Dzień wolny</a></td>
+                <td>2026-10-13 09:12:43</td>
+                <td></td>
+            </tr>
+        </tbody>
+    </table>
+    """
+    items = client._parse_messages_html(html)
+    assert len(items) == 2
+
+    # Item 1
+    assert items[0].id == "message:1254708"
+    assert items[0].title == "Consent for visit to a music school"
+    assert items[0].author == "Kruk-Zabawa Beata (Kruk-Zabawa Beata) [Nauczyciel]"
+    assert items[0].date == "2026-10-15 06:13:04"
+    assert items[0].attachments == ["Załącznik dołączony do wiadomości"]
+    assert items[0].metadata["message_id"] == "1254708"
+
+    # Item 2
+    assert items[1].id == "message:1207517"
+    assert items[1].title == "Dzień wolny"
+    assert items[1].author == "Anna Jurczak-Nicpoń"
+    assert items[1].date == "2026-10-13 09:12:43"
+    assert items[1].attachments == []
+    assert items[1].metadata["message_id"] == "1207517"
+
+
+def test_parse_single_message_html_realistic_container_and_attachments():
+    """Verify parsing real Synergia HTML single message view with container-message-content and file icons."""
+    client = LibrusClient("user", "pass")
+    html = """
+    <table class="stretch container-message">
+        <tr>
+            <td>
+                <div class="container-message-content">
+                    Dear Parents,<br/><br/>
+                    Please find the test attached.<br/>
+                    Regards
+                </div>
+                <table>
+                    <tr><td><b>Pliki:</b></td></tr>
+                    <tr>
+                        <td>
+                            <img src="/assets/img/filetype_icons/pdf.png"/>
+                            Angielski klasa 1.pdf
+                        </td>
+                        <td>
+                            <a href="javascript:void(0);"><img onclick="otworz_w_nowym_oknie('/wiadomosci/pobierz_zalacznik/769356/123')"/></a>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+    """
+    body, attachments = client._parse_single_message_html(html)
+    assert "Dear Parents," in body
+    assert "Please find the test attached." in body
+    assert attachments == ["Angielski klasa 1.pdf"]
+
+
+@responses.activate
+def test_populate_message_content_html_fallback_without_link_metadata():
+    """Verify HTML fallback succeeds using reconstructed /wiadomosci/1/5/{msg_id}/f0 when link metadata is None."""
+    client = LibrusClient("user", "pass")
+    client.is_authenticated = True
+
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/inbox/messages/555",
+        status=500,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/message/555",
+        status=500,
+    )
+    responses.add(
+        responses.GET,
+        f"https://{WIADOMOSCI_DOMAIN}/api/messages/555",
+        status=500,
+    )
+
+    detail_html = """
+    <div class="container-message-content">Treść odzyskana przez Synergia URL fallback</div>
+    """
+    responses.add(
+        responses.GET,
+        "https://synergia.librus.pl/wiadomosci/1/5/555/f0",
+        body=detail_html,
+        status=200,
+    )
+
+    item = SchoolFeedItem(
+        id="message:555",
+        item_type=SchoolItemType.MESSAGE,
+        title="Awaria API bez linku",
+        content="Podgląd",
+        metadata={
+            "message_id": "555",
+            "source": "wiadomosci_api",
+            "has_full_content": False,
+        },
+    )
+
+    client.populate_message_content(item)
+    assert item.content == "Treść odzyskana przez Synergia URL fallback"
+    assert item.metadata["has_full_content"] is True
+
+

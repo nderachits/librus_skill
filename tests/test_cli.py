@@ -49,3 +49,23 @@ def test_cli_install_launchd(capsys):
     captured = capsys.readouterr()
     assert "<!DOCTYPE plist" in captured.out
     assert "<integer>3600</integer>" in captured.out
+
+
+def test_cli_run_force():
+    """Test CLI run accepts --force flag and passes it to engine."""
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.LibrusSyncEngine") as mock_engine_cls:
+        cfg = mock_cfg.return_value
+        cfg.validate_librus_credentials.return_value = None
+        mock_engine = mock_engine_cls.return_value
+        mock_engine.run_sync.return_value.success = True
+        mock_engine.run_sync.return_value.items_found = 10
+        mock_engine.run_sync.return_value.items_synced = 10
+        mock_engine.run_sync.return_value.target_type = "local_file"
+        mock_engine.run_sync.return_value.doc_id = None
+
+        with patch("sys.argv", ["librus-sync", "run", "--force"]):
+            main()
+
+        mock_engine.run_sync.assert_called_once_with(force=True)
+

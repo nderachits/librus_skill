@@ -45,12 +45,12 @@ class LibrusSyncEngine:
         )
         return self.librus_client
 
-    def run_sync(self) -> SyncResult:
+    def run_sync(self, force: bool = False) -> SyncResult:
         """
         Execute one sync cycle:
         1. Query Librus for announcements, messages, and events.
-        2. Identify unseen items using state manager.
-        3. Format and append unseen items to Google Doc (or local fallback).
+        2. Identify unseen items using state manager (or all items if force=True).
+        3. Format and append items to Google Doc (or local fallback).
         4. Persist updated sync state.
         """
         start_time = datetime.now(timezone.utc)
@@ -63,8 +63,8 @@ class LibrusSyncEngine:
             all_items = client.collect_all(limit_messages=self.config.fetch_messages_limit)
             logger.info("Collected %d total items from Librus", len(all_items))
 
-            # Filter for new items
-            new_items = self.state_manager.filter_new(all_items)
+            # Filter for new items (or all items if forced)
+            new_items = all_items if force else self.state_manager.filter_new(all_items)
 
             if not new_items:
                 logger.info("No new items to sync. State is up to date.")

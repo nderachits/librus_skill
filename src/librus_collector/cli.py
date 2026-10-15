@@ -32,7 +32,7 @@ def cmd_run(args):
         sys.exit(1)
 
     engine = LibrusSyncEngine(config=config)
-    result = engine.run_sync()
+    result = engine.run_sync(force=getattr(args, "force", False))
 
     if result.success:
         print(f"\n✅ Synchronization completed successfully!")
@@ -172,6 +172,11 @@ def main():
 
     # run
     p_run = subparsers.add_parser("run", help="Run a single sync right now")
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="Force sync all items, bypassing state deduplication",
+    )
     p_run.set_defaults(func=cmd_run)
 
     # daemon
