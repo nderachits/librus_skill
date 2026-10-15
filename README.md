@@ -4,8 +4,8 @@ A dedicated, lightweight Python tool (built with `uv` and `git`) that synchroniz
 
 ---
 
-## 💡 Does this make sense?
-**Yes, absolutely.** Connecting a single rolling Google Doc to NotebookLM is one of the most effective ways to interact with school announcements and teacher messages:
+## 💡 Why NotebookLM for School Updates?
+Connecting a single rolling Google Doc to NotebookLM is one of the most effective ways to interact with school announcements and teacher messages:
 
 1. **Overcomes NotebookLM Source Limits:** NotebookLM has a limit of 50 sources per notebook. If every school message were a separate document or file, you would quickly hit that limit. Appending chronologically to a single structured Google Doc creates an append-only school chronicle.
 2. **Contextual & Semantic Search:** You can query NotebookLM in natural Polish or English:
@@ -37,21 +37,21 @@ A dedicated, lightweight Python tool (built with `uv` and `git`) that synchroniz
                                 ▼
                  ┌────────────────────────────────┐
                  │       Librus Collector         │
-                 │  - LibrusClient (native)       │
-                 │  - State Deduplication         │
-                 │  - NotebookLM Formatter        │
+                 │  - Native LibrusClient         │
+                 │  - Primary ID Deduplication    │
+                 │  - Structured ItemStore        │
                  └──────────────┬─────────────────┘
                                 │
-          ┌─────────────────────┴─────────────────────┐
-          ▼                                           ▼
-┌───────────────────────────┐               ┌───────────────────┐
-│        Google Doc         │ (optional)    │ Local Markdown    │
-│  Single rolling doc       │               │ librus_updates.md │
-│             │             │               └───────────────────┘
-│             ▼             │
-│      Google NotebookLM    │
-│  - Semantic Q&A & Search  │
-└───────────────────────────┘
+          ┌─────────────────────┼─────────────────────┐
+          ▼                     ▼                     ▼
+┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
+│ Structured Vault  │ │    Google Doc     │ │  Local Mirror     │
+│   data/items/     │ │ Single roll doc   │ │ librus_updates.md │
+│ (Finder-sortable) │ │        │          │ └───────────────────┘
+└───────────────────┘ └────────┼──────────┘
+                               ▼
+                        Google NotebookLM
+                     - Semantic Q&A & Search
 ```
 
 ---
@@ -86,6 +86,10 @@ GOOGLE_DOC_ID=1abc...xyz
 
 # Google Service Account JSON (Recommended for background sync)
 GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
+
+# Optional storage paths:
+# LIBRUS_ITEMS_DIR=data/items
+# LOCAL_EXPORT_PATH=librus_updates.md
 ```
 
 > **Note on Google Authentication:**
@@ -98,16 +102,27 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 
 ## 📖 Usage
 
+### Browse structured message files in macOS Finder:
+Each message, announcement, event, and homework is saved as a clean `.md` file with YAML frontmatter in `data/items/`. Files start with `YYYY-MM-DD_HHMMSS` timestamps and synchronize file modification times (`mtime`), so sorting by either **Name** or **Date Modified** orders them chronologically:
+```bash
+open data/items
+```
+
 ### Run on demand:
 ```bash
 uv run librus-sync run
+
+# Or sync and automatically re-assemble the unified compendium:
+uv run librus-sync run --rebuild
 ```
 
 ### Reassemble the unified compendium document:
-Compiles all individual items stored in `data/items/` into a single, cohesive, categorized document:
+Compiles all individual items stored in `data/items/` into a single, cohesive document (`librus_updates.md` and Google Doc):
 ```bash
+# Categorized sections (Calendar, Announcements, Homework, Messages; newest first in each section):
 uv run librus-sync assemble
-# or pure chronological order:
+
+# Pure chronological order across all categories (newest first from top to bottom):
 uv run librus-sync assemble --flat
 ```
 
