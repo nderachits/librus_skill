@@ -27,10 +27,11 @@ def test_google_docs_noop_on_empty_text(tmp_path):
 
 
 def test_google_docs_mocked_api_append(tmp_path):
-    """Verify batchUpdate payload generation and index calculation."""
+    """Verify batchUpdate payload generation and index calculation when inserting at end."""
     sync = GoogleDocsSync(
         doc_id="mock_doc_id_999",
         local_fallback_file=str(tmp_path / "fallback.md"),
+        insert_position="end",
     )
 
     # Mock the Google Docs API service
@@ -73,6 +74,97 @@ def test_google_docs_mocked_api_append(tmp_path):
     assert insert_req["text"] == "New content to append"
 
 
+def test_google_docs_mocked_api_prepend_default(tmp_path):
+    """Verify batchUpdate payload generation when inserting at beginning (default)."""
+    sync = GoogleDocsSync(
+        doc_id="mock_doc_id_888",
+        local_fallback_file=str(tmp_path / "fallback.md"),
+    )
+    assert sync.insert_position == "beginning"
+
+    mock_service = MagicMock()
+    mock_docs = MagicMock()
+    mock_service.documents.return_value = mock_docs
+
+    # Document without compendium header
+    mock_get = MagicMock()
+    mock_get.execute.return_value = {
+        "body": {
+            "content": [
+                {
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "Previous item\n"}}]
+                    },
+                    "endIndex": 150,
+                }
+            ]
+        }
+    }
+    mock_docs.get.return_value = mock_get
+
+    mock_batch = MagicMock()
+    mock_batch.execute.return_value = {"replies": []}
+    mock_docs.batchUpdate.return_value = mock_batch
+
+    sync._service = mock_service
+    sync.__class__.is_google_configured = property(lambda self: True)
+
+    res = sync.append_text("New item at top")
+    assert res["status"] == "success"
+    assert res["target"] == "google_doc"
+
+    call_kwargs = mock_docs.batchUpdate.call_args[1]
+    requests_sent = call_kwargs["body"]["requests"]
+    assert len(requests_sent) == 1
+    insert_req = requests_sent[0]["insertText"]
+    # With no header, inserts at index 1
+    assert insert_req["location"]["index"] == 1
+    assert "New item at top" in insert_req["text"]
+
+
+def test_google_docs_mocked_api_prepend_pure_index_1(tmp_path):
+    """When inserting at beginning, always inserts at index 1 (pure stream without headers)."""
+    sync = GoogleDocsSync(
+        doc_id="mock_doc_pure",
+        local_fallback_file=str(tmp_path / "fallback.md"),
+    )
+
+    mock_service = MagicMock()
+    mock_docs = MagicMock()
+    mock_service.documents.return_value = mock_docs
+
+    mock_get = MagicMock()
+    mock_get.execute.return_value = {
+        "body": {
+            "content": [
+                {
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "Existing older message\n"}}]
+                    },
+                    "endIndex": 150,
+                },
+            ]
+        }
+    }
+    mock_docs.get.return_value = mock_get
+
+    mock_batch = MagicMock()
+    mock_batch.execute.return_value = {"replies": []}
+    mock_docs.batchUpdate.return_value = mock_batch
+
+    sync._service = mock_service
+    sync.__class__.is_google_configured = property(lambda self: True)
+
+    res = sync.append_text("New message at index 1")
+    assert res["status"] == "success"
+
+    call_kwargs = mock_docs.batchUpdate.call_args[1]
+    requests_sent = call_kwargs["body"]["requests"]
+    insert_req = requests_sent[0]["insertText"]
+    assert insert_req["location"]["index"] == 1
+    assert "New message at index 1" in insert_req["text"]
+
+
 def test_extract_doc_id():
     """Verify document ID is extracted from raw ID or full browser URL."""
     from librus_collector.google_docs import extract_doc_id
@@ -93,6 +185,7 @@ def test_google_docs_tabbed_document(tmp_path):
     sync = GoogleDocsSync(
         doc_id="tabbed_doc_123",
         local_fallback_file=str(tmp_path / "fallback.md"),
+        insert_position="end",
     )
 
     mock_service = MagicMock()
@@ -180,6 +273,7 @@ def test_google_docs_local_mirror_updated_on_successful_google_sync(tmp_path):
     sync = GoogleDocsSync(
         doc_id="doc_mirror_test",
         local_fallback_file=str(local_file),
+        insert_position="end",
     )
 
     mock_service = MagicMock()
@@ -203,6 +297,34 @@ def test_google_docs_local_mirror_updated_on_successful_google_sync(tmp_path):
     res2 = sync.append_text("Batch 2 content\n", rewrite=False)
     assert res2["status"] == "success"
     assert local_file.read_text(encoding="utf-8") == "Batch 1 content\nBatch 2 content\n"
+
+
+def test_google_docs_local_mirror_prepending(tmp_path):
+    """When insert_position='beginning', batches are prepended to local mirror."""
+    local_file = tmp_path / "mirror_prepend.md"
+    sync = GoogleDocsSync(
+        doc_id="doc_prepend_test",
+        local_fallback_file=str(local_file),
+        insert_position="beginning",
+    )
+
+    mock_service = MagicMock()
+    mock_docs = MagicMock()
+    mock_service.documents.return_value = mock_docs
+    mock_docs.get.return_value.execute.return_value = {
+        "body": {"content": [{"endIndex": 50}]}
+    }
+    mock_docs.batchUpdate.return_value.execute.return_value = {}
+
+    sync._service = mock_service
+    sync.__class__.is_google_configured = property(lambda self: True)
+
+    sync.append_text("First batch\n", rewrite=False)
+    sync.append_text("Second batch (newer)\n", rewrite=False)
+
+    content = local_file.read_text(encoding="utf-8")
+    # Newer batch must appear before older batch
+    assert content.index("Second batch (newer)") < content.index("First batch")
 
 
 def test_google_docs_clean_local_file(tmp_path):

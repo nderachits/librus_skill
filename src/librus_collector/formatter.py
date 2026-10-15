@@ -39,67 +39,44 @@ def format_single_item(item: SchoolFeedItem) -> str:
     return "\n".join(lines)
 
 
-def format_batch_for_doc(items: List[SchoolFeedItem], batch_time: Optional[datetime] = None) -> str:
-    """Format a batch of new items to append to the Google Doc."""
+def format_batch_for_doc(
+    items: List[SchoolFeedItem],
+    batch_time: Optional[datetime] = None,
+    sort_newest_first: bool = True,
+) -> str:
+    """Format a batch of new items to append or prepend to the Google Doc without banners."""
     if not items:
         return ""
 
-    dt = batch_time or datetime.now(timezone.utc)
-    ts_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Ensure items within batch are sorted newest first regardless of type
+    sorted_items = (
+        sorted(items, key=lambda it: it.sort_datetime, reverse=True)
+        if sort_newest_first
+        else items
+    )
 
-    header = [
-        f"\n\n",
-        f"# ══════════════════════════════════════════════════════════════════════\n",
-        f"# LIBRUS UPDATE SYNC: {ts_str} ({len(items)} new items)\n",
-        f"# ══════════════════════════════════════════════════════════════════════\n\n",
-    ]
-
-    item_blocks = [format_single_item(it) for it in items]
-    return "".join(header) + "\n".join(item_blocks) + "\n"
+    item_blocks = [format_single_item(it) for it in sorted_items]
+    return "\n".join(item_blocks).strip() + "\n\n"
 
 
 def assemble_full_document(
     items: List[SchoolFeedItem],
-    group_by_type: bool = True,
+    group_by_type: bool = False,
     title: Optional[str] = None,
     assemble_time: Optional[datetime] = None,
 ) -> str:
     """
     Assemble all stored items into a single, cohesive, up-to-date document.
-    Eliminates redundant sync batch headers and organizes items logically
-    for optimal NotebookLM synthesis and human readability.
+    Outputs a pure stream of item blocks sorted newest-first without headers or banners.
     """
     if not items:
-        return "# LIBRUS UPDATES\n\n(Brak powiadomień / No updates collected yet)\n"
-
-    dt = assemble_time or datetime.now(timezone.utc)
-    ts_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    doc_title = title or "LIBRUS SCHOOL UPDATES COMPENDIUM"
-
-    # Count by type
-    counts: Dict[SchoolItemType, int] = {}
-    for item in items:
-        counts[item.item_type] = counts.get(item.item_type, 0) + 1
-
-    header_lines = [
-        f"# ══════════════════════════════════════════════════════════════════════",
-        f"# {doc_title}",
-        f"# Assembled: {ts_str} | Total items: {len(items)}",
-        f"# ══════════════════════════════════════════════════════════════════════\n",
-        f"### Podsumowanie / Summary:",
-        f"• 📅 Terminarz i Wydarzenia / Events: {counts.get(SchoolItemType.EVENT, 0)}",
-        f"• 📢 Ogłoszenia / Announcements: {counts.get(SchoolItemType.ANNOUNCEMENT, 0)}",
-        f"• 📝 Zadania domowe / Homework: {counts.get(SchoolItemType.HOMEWORK, 0)}",
-        f"• ✉️ Wiadomości / Messages: {counts.get(SchoolItemType.MESSAGE, 0)}",
-        f"• 📋 Uwagi / Notes: {counts.get(SchoolItemType.NOTE, 0)}",
-        f"\n---\n",
-    ]
+        return "(Brak powiadomień / No updates collected yet)\n"
 
     if not group_by_type:
-        # Flat chronological order (newest first)
+        # Flat chronological order (newest first regardless of type)
         sorted_items = sorted(items, key=lambda it: it.sort_datetime, reverse=True)
         blocks = [format_single_item(it) for it in sorted_items]
-        return "\n".join(header_lines) + "\n" + "\n".join(blocks)
+        return "\n".join(blocks).strip() + "\n"
 
     # Grouped sections in natural school priority order
     sections_order = [
@@ -127,7 +104,7 @@ def assemble_full_document(
         sec_blocks = [format_single_item(it) for it in matching]
         section_outputs.append("\n".join(sec_header) + "\n" + "\n".join(sec_blocks))
 
-    return "\n".join(header_lines) + "\n" + "\n".join(section_outputs)
+    return "\n\n".join(section_outputs).strip() + "\n"
 
 
 def clean_markdown_batches(text: str) -> str:

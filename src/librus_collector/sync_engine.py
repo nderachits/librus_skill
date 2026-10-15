@@ -37,6 +37,7 @@ class LibrusSyncEngine:
             client_secrets_file=self.config.google_client_secrets_file,
             token_file=self.config.google_token_file,
             local_fallback_file=self.config.local_export_path,
+            insert_position=self.config.insert_position,
         )
         self.telegram_notifier = telegram_notifier or TelegramNotifier(
             bot_token=self.config.telegram_bot_token,
@@ -75,6 +76,8 @@ class LibrusSyncEngine:
 
             # Filter for new items (or all items if forced)
             new_items = all_items if force else self.state_manager.filter_new(all_items)
+            # Ensure items are ordered newest first regardless of type
+            new_items.sort(key=lambda it: it.sort_datetime, reverse=True)
 
             if not new_items and not rebuild:
                 logger.info("No new items to sync. State is up to date.")
@@ -103,8 +106,12 @@ class LibrusSyncEngine:
 
             if rebuild:
                 # Assemble entire document from all stored items
-                all_stored = self.item_store.load_all_items()
-                formatted_text = assemble_full_document(all_stored, group_by_type=True, assemble_time=start_time)
+                all_stored = self.item_store.load_all_items(sort_by="date", reverse=True)
+                formatted_text = assemble_full_document(
+                    all_stored,
+                    group_by_type=self.config.group_by_type,
+                    assemble_time=start_time,
+                )
                 append_res = self.docs_sync.append_text(formatted_text, rewrite=True)
             else:
                 # Format incremental batch
@@ -151,13 +158,14 @@ class LibrusSyncEngine:
                 doc_id=self.docs_sync.doc_id,
             )
 
-    def assemble(self, group_by_type: bool = True) -> Dict[str, Any]:
+    def assemble(self, group_by_type: Optional[bool] = None) -> Dict[str, Any]:
         """
         Assemble all items stored in ItemStore into a single cohesive document
         and update Google Doc and local mirror.
         """
-        items = self.item_store.load_all_items(sort_by="date")
-        formatted_text = assemble_full_document(items, group_by_type=group_by_type)
+        use_group = self.config.group_by_type if group_by_type is None else group_by_type
+        items = self.item_store.load_all_items(sort_by="date", reverse=True)
+        formatted_text = assemble_full_document(items, group_by_type=use_group)
         res = self.docs_sync.append_text(formatted_text, rewrite=True)
         res["total_items_assembled"] = len(items)
         return res

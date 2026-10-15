@@ -142,5 +142,72 @@ def test_sync_engine_force_resync(tmp_path):
     # Verify fallback file was rewritten without duplicates
     content = fallback_file.read_text(encoding="utf-8")
     assert content.count("Ważne ogłoszenie") == 1
-    assert content.count("LIBRUS UPDATE SYNC") == 1
+    assert "LIBRUS UPDATE SYNC" not in content
+
+
+def test_sync_engine_incremental_and_rebuild_order_consistency(tmp_path):
+    """
+    Verify that incremental syncing (insert_position=beginning) and rebuilding
+    both produce the exact same reverse-chronological item ordering across types.
+    """
+    state_file = tmp_path / "state.json"
+    fallback_file = tmp_path / "updates.md"
+
+    config = AppConfig(
+        librus_login="test_user",
+        librus_password="test_password",
+        local_export_path=str(fallback_file),
+        state_file_path=str(state_file),
+        items_dir=str(tmp_path / "items"),
+        insert_position="beginning",
+        group_by_type=False,
+    )
+
+    state_mgr = SyncStateManager(str(state_file))
+    docs_sync = GoogleDocsSync(local_fallback_file=str(fallback_file), insert_position="beginning")
+
+    mock_client = MagicMock()
+    older_event = SchoolFeedItem(id="ev:1", item_type=SchoolItemType.EVENT, title="Tydzień Nauki", date="2026-10-10")
+    older_hw = SchoolFeedItem(id="hw:2", item_type=SchoolItemType.HOMEWORK, title="Zadanie z matmy", date="2026-10-12")
+
+    mock_client.collect_all.return_value = [older_event, older_hw]
+    engine = LibrusSyncEngine(
+        config=config,
+        librus_client=mock_client,
+        state_manager=state_mgr,
+        docs_sync=docs_sync,
+    )
+
+    # Sync batch 1: older items
+    res1 = engine.run_sync()
+    assert res1.items_synced == 2
+
+    # Sync batch 2: newer items
+    newer_ann = SchoolFeedItem(id="ann:3", item_type=SchoolItemType.ANNOUNCEMENT, title="Dzień Sportu", date="2026-10-14")
+    newer_msg = SchoolFeedItem(id="msg:4", item_type=SchoolItemType.MESSAGE, title="Ważna wiadomość", date="2026-10-15 18:00")
+    mock_client.collect_all.return_value = [older_event, older_hw, newer_ann, newer_msg]
+
+    res2 = engine.run_sync()
+    assert res2.items_synced == 2
+
+    # Verify order in incrementally updated file: newest to oldest
+    content_incremental = fallback_file.read_text(encoding="utf-8")
+    idx_msg = content_incremental.index("Ważna wiadomość")
+    idx_ann = content_incremental.index("Dzień Sportu")
+    idx_hw = content_incremental.index("Zadanie z matmy")
+    idx_ev = content_incremental.index("Tydzień Nauki")
+    assert idx_msg < idx_ann < idx_hw < idx_ev
+
+    # Now rebuild the compendium from scratch
+    res_rebuild = engine.run_sync(rebuild=True)
+    assert res_rebuild.success is True
+
+    content_rebuild = fallback_file.read_text(encoding="utf-8")
+    r_msg = content_rebuild.index("Ważna wiadomość")
+    r_ann = content_rebuild.index("Dzień Sportu")
+    r_hw = content_rebuild.index("Zadanie z matmy")
+    r_ev = content_rebuild.index("Tydzień Nauki")
+
+    # In rebuilt doc, the relative order of items is the exact same!
+    assert r_msg < r_ann < r_hw < r_ev
 

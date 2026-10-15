@@ -192,8 +192,8 @@ def test_assemble_full_document():
     items = [item_event, item_announcement, item_msg]
 
     doc = assemble_full_document(items, group_by_type=True)
-    assert "LIBRUS SCHOOL UPDATES COMPENDIUM" in doc
-    assert "Total items: 3" in doc
+    assert "LIBRUS SCHOOL UPDATES COMPENDIUM" not in doc
+    assert "Total items:" not in doc
     assert "📅 TERMINARZ I WYDARZENIA / EVENTS & EXAMS (1)" in doc
     assert "📢 OGŁOSZENIA / ANNOUNCEMENTS (1)" in doc
     assert "✉️ WIADOMOŚCI / MESSAGES (1)" in doc

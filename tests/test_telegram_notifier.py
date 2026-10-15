@@ -150,8 +150,8 @@ def test_sync_engine_telegram_integration(tmp_path):
     mock_telegram.is_configured = True
     mock_telegram.send_items.return_value = 2
 
-    item1 = SchoolFeedItem(id="m1", item_type=SchoolItemType.MESSAGE, title="Msg 1", content="Hi")
-    item2 = SchoolFeedItem(id="m2", item_type=SchoolItemType.ANNOUNCEMENT, title="Ann 1", content="Alert")
+    item1 = SchoolFeedItem(id="m1", item_type=SchoolItemType.MESSAGE, title="Msg 1", content="Hi", date="2026-10-15 12:00")
+    item2 = SchoolFeedItem(id="m2", item_type=SchoolItemType.ANNOUNCEMENT, title="Ann 1", content="Alert", date="2026-10-15 10:00")
 
     mock_client.collect_all.return_value = [item1, item2]
     mock_state.filter_new.return_value = [item1, item2]

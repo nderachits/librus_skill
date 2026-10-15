@@ -128,11 +128,11 @@ uv run librus-sync run --rebuild
 ### Reassemble the unified compendium document:
 Compiles all individual items stored in `data/items/` into a single, cohesive document (`librus_updates.md` and Google Doc):
 ```bash
-# Categorized sections (Calendar, Announcements, Homework, Messages; newest first in each section):
+# Pure chronological order across all categories (newest first from top to bottom - default):
 uv run librus-sync assemble
 
-# Pure chronological order across all categories (newest first from top to bottom):
-uv run librus-sync assemble --flat
+# Categorized sections (Calendar, Announcements, Homework, Messages; newest first in each section):
+uv run librus-sync assemble --group-by-type
 ```
 
 ### Import existing messages from `librus_updates.md`:

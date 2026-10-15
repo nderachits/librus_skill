@@ -83,7 +83,7 @@ def cmd_assemble(args):
     """Assemble all stored individual message markdown files into a single compendium document."""
     config = get_config()
     engine = LibrusSyncEngine(config=config)
-    group_by_type = not getattr(args, "flat", False)
+    group_by_type = getattr(args, "group_by_type", False)
 
     print(f"Assembling compendium from structured storage ({config.items_dir})...")
     res = engine.assemble(group_by_type=group_by_type)
@@ -322,9 +322,16 @@ def main():
         help="Assemble all stored individual message markdown files into a single compendium",
     )
     p_assemble.add_argument(
+        "--group-by-type",
+        action="store_true",
+        default=False,
+        help="Group items into category sections (Events, Announcements, etc.) instead of flat chronological",
+    )
+    p_assemble.add_argument(
         "--flat",
         action="store_true",
-        help="Sort purely chronologically instead of grouping by category sections",
+        default=True,
+        help="Sort purely chronologically newest-first (default)",
     )
     p_assemble.set_defaults(func=cmd_assemble)
 

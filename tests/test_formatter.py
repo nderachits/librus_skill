@@ -48,7 +48,7 @@ def test_format_batch_for_doc():
     batch_time = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
     batch_text = format_batch_for_doc(items, batch_time=batch_time)
 
-    assert "LIBRUS UPDATE SYNC: 2026-10-15 12:00:00 UTC (2 new items)" in batch_text
+    assert "LIBRUS UPDATE SYNC" not in batch_text
     assert "Msg 1" in batch_text
     assert "Msg 2" in batch_text
 
@@ -195,4 +195,40 @@ def test_clean_markdown_batches_partial_batch_deduplication():
     assert cleaned.count("Konkurs 2") == 1
     # Header for batch 2 should be updated from 2 new items to 1 new items
     assert "(1 new items)" in cleaned
+
+
+def test_assemble_full_document_flat_chronological_by_default():
+    """Verify assemble_full_document defaults to flat chronological newest-first order regardless of type."""
+    from librus_collector.formatter import assemble_full_document
+
+    items = [
+        SchoolFeedItem(id="ev1", item_type=SchoolItemType.EVENT, title="Old Event", date="2026-10-10"),
+        SchoolFeedItem(id="msg1", item_type=SchoolItemType.MESSAGE, title="New Message", date="2026-10-15 18:00"),
+        SchoolFeedItem(id="hw1", item_type=SchoolItemType.HOMEWORK, title="Middle Homework", date="2026-10-13"),
+        SchoolFeedItem(id="ann1", item_type=SchoolItemType.ANNOUNCEMENT, title="Newest Announcement", date="2026-10-15 19:00"),
+    ]
+
+    doc = assemble_full_document(items)
+
+    # In flat chronological mode (default), items should appear strictly newest-first regardless of type:
+    # 1. Newest Announcement (10-15 19:00)
+    # 2. New Message (10-15 18:00)
+    # 3. Middle Homework (10-13)
+    # 4. Old Event (10-10)
+    idx_ann = doc.index("Newest Announcement")
+    idx_msg = doc.index("New Message")
+    idx_hw = doc.index("Middle Homework")
+    idx_ev = doc.index("Old Event")
+
+    assert idx_ann < idx_msg < idx_hw < idx_ev
+
+
+def test_format_batch_for_doc_sorts_newest_first():
+    """Verify format_batch_for_doc sorts items within batch newest first regardless of type."""
+    items = [
+        SchoolFeedItem(id="ev1", item_type=SchoolItemType.EVENT, title="Morning Event", date="2026-10-15 08:00"),
+        SchoolFeedItem(id="msg1", item_type=SchoolItemType.MESSAGE, title="Evening Message", date="2026-10-15 20:00"),
+    ]
+    batch = format_batch_for_doc(items)
+    assert batch.index("Evening Message") < batch.index("Morning Event")
 

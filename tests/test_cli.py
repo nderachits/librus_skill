@@ -135,10 +135,29 @@ def test_cli_assemble(capsys, tmp_path):
         with patch("sys.argv", ["librus-sync", "assemble"]):
             main()
 
-    mock_engine.assemble.assert_called_once_with(group_by_type=True)
+    mock_engine.assemble.assert_called_once_with(group_by_type=False)
     captured = capsys.readouterr()
     assert "Compendium assembled successfully!" in captured.out
     assert "15" in captured.out
+
+
+def test_cli_assemble_group_by_type(capsys, tmp_path):
+    """Test CLI assemble with --group-by-type flag."""
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.LibrusSyncEngine") as mock_engine_cls:
+        mock_cfg.return_value.items_dir = str(tmp_path / "items")
+        mock_engine = mock_engine_cls.return_value
+        mock_engine.assemble.return_value = {
+            "status": "success",
+            "target": "local_file",
+            "total_items_assembled": 15,
+            "local_mirror": "librus_updates.md",
+        }
+
+        with patch("sys.argv", ["librus-sync", "assemble", "--group-by-type"]):
+            main()
+
+    mock_engine.assemble.assert_called_once_with(group_by_type=True)
 
 
 def test_cli_import(capsys, tmp_path):

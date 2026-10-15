@@ -70,6 +70,14 @@ class AppConfig(BaseModel):
         default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID"),
         description="Telegram chat ID or channel username for notifications",
     )
+    insert_position: str = Field(
+        default_factory=lambda: os.getenv("INSERT_POSITION", "beginning").lower(),
+        description="Where to insert new items during incremental sync: 'beginning' (default) or 'end'",
+    )
+    group_by_type: bool = Field(
+        default_factory=lambda: os.getenv("GROUP_BY_TYPE", "false").lower() in ("true", "1", "yes"),
+        description="Whether to group items by type in compendium/rebuild (default: false, newest first regardless of type)",
+    )
 
 
     def validate_librus_credentials(self) -> None:

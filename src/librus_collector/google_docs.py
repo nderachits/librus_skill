@@ -31,32 +31,45 @@ def extract_doc_id(raw_doc_id_or_url: Optional[str]) -> Optional[str]:
     return val
 
 
+_UNSET = object()
+
+
 class GoogleDocsSync:
-    """Manages appending content to a Google Doc."""
+    """Manages appending or prepending content to a Google Doc."""
 
     def __init__(
         self,
-        doc_id: Optional[str] = None,
-        service_account_file: Optional[str] = None,
-        client_secrets_file: Optional[str] = None,
-        token_file: Optional[str] = None,
+        doc_id: Any = _UNSET,
+        service_account_file: Any = _UNSET,
+        client_secrets_file: Any = _UNSET,
+        token_file: Any = _UNSET,
         local_fallback_file: Optional[str] = None,
+        insert_position: Optional[str] = None,
     ):
-        raw_doc_id = doc_id or os.getenv("GOOGLE_DOC_ID")
+        raw_doc_id = os.getenv("GOOGLE_DOC_ID") if doc_id is _UNSET else doc_id
         self.doc_id = extract_doc_id(raw_doc_id)
-        self.service_account_file = (
-            service_account_file
-            or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-            or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        )
-        self.client_secrets_file = (
-            client_secrets_file
-            or os.getenv("GOOGLE_CLIENT_SECRETS_FILE", "credentials.json")
-        )
-        self.token_file = token_file or os.getenv("GOOGLE_TOKEN_FILE", "token.json")
+        if service_account_file is _UNSET:
+            self.service_account_file = (
+                os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+                or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            )
+        else:
+            self.service_account_file = service_account_file
+
+        if client_secrets_file is _UNSET:
+            self.client_secrets_file = os.getenv("GOOGLE_CLIENT_SECRETS_FILE", "credentials.json")
+        else:
+            self.client_secrets_file = client_secrets_file
+
+        if token_file is _UNSET:
+            self.token_file = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
+        else:
+            self.token_file = token_file
+
         self.local_fallback_file = Path(
             local_fallback_file or os.getenv("LOCAL_EXPORT_PATH", "librus_updates.md")
         )
+        self.insert_position = (insert_position or os.getenv("INSERT_POSITION", "beginning")).lower()
         self._service = None
 
     @property
@@ -144,23 +157,25 @@ class GoogleDocsSync:
 
     def append_text(self, text: str, rewrite: bool = False) -> Dict[str, Any]:
         """
-        Write or append text to the configured Google Doc.
-        - If rewrite is True (e.g. forced resync), replaces entire doc content.
-        - If rewrite is False (incremental sync), appends text to the end.
+        Write or insert text to the configured Google Doc.
+        - If rewrite is True (e.g. forced resync or rebuild), replaces entire doc content.
+        - If rewrite is False (incremental sync):
+            - If insert_position == "beginning", inserts at the beginning (index 1).
+            - If insert_position == "end", appends text to the end.
         In all cases, the local file (e.g. librus_updates.md) is kept updated as
         an exact mirror of the document content.
         """
         if not text:
             return {"status": "noop", "message": "No text to append."}
 
-        action_name = "rewrite" if rewrite else "append"
+        action_name = "rewrite" if rewrite else ("prepend" if self.insert_position == "beginning" else "append")
         text_to_insert = text.lstrip("\n") if rewrite else text
 
         # Check if Google Docs is available
         if not self.doc_id or not self.is_google_configured:
             logger.info(
                 "Google Docs not configured or missing credentials. %s to local file: %s",
-                "Rewriting" if rewrite else "Appending",
+                "Rewriting" if rewrite else ("Prepending" if self.insert_position == "beginning" else "Appending"),
                 self.local_fallback_file,
             )
             return self._write_local(text_to_insert if rewrite else text, rewrite=rewrite)
@@ -168,7 +183,7 @@ class GoogleDocsSync:
         try:
             service = self.get_service()
 
-            # Retrieve the current document to find its end index
+            # Retrieve the current document to find its end index and content structure
             doc = service.documents().get(documentId=self.doc_id).execute()
             
             # Support both standard documents and tabbed documents
@@ -213,17 +228,29 @@ class GoogleDocsSync:
                     }
                 })
             else:
-                # Insert at the end (subtract 1 for the mandatory trailing newline index)
-                insert_location = max(1, end_index - 1)
-                insert_loc = {"index": insert_location}
-                if tab_id:
-                    insert_loc["tabId"] = tab_id
-                requests_payload.append({
-                    "insertText": {
-                        "location": insert_loc,
-                        "text": text,
-                    }
-                })
+                if self.insert_position == "beginning":
+                    insert_loc = {"index": 1}
+                    if tab_id:
+                        insert_loc["tabId"] = tab_id
+                    formatted_insert = text.strip() + "\n\n"
+                    requests_payload.append({
+                        "insertText": {
+                            "location": insert_loc,
+                            "text": formatted_insert,
+                        }
+                    })
+                else:
+                    # Insert at the end (subtract 1 for the mandatory trailing newline index)
+                    insert_location = max(1, end_index - 1)
+                    insert_loc = {"index": insert_location}
+                    if tab_id:
+                        insert_loc["tabId"] = tab_id
+                    requests_payload.append({
+                        "insertText": {
+                            "location": insert_loc,
+                            "text": text,
+                        }
+                    })
 
             result = (
                 service.documents()
@@ -236,16 +263,19 @@ class GoogleDocsSync:
                 self._write_local(text_to_insert, rewrite=True)
             else:
                 if not self.local_fallback_file.exists() or self.local_fallback_file.stat().st_size == 0:
-                    # Mirror was missing or empty: reconstruct full mirror from doc before update + new text
+                    # Mirror was missing or empty: reconstruct full mirror from doc
                     existing_text = self._extract_text_from_doc(doc)
-                    full_text = existing_text.rstrip("\n") + "\n\n" + text.lstrip("\n")
+                    if self.insert_position == "beginning":
+                        full_text = text.strip() + "\n\n" + existing_text.lstrip("\n")
+                    else:
+                        full_text = existing_text.rstrip("\n") + "\n\n" + text.lstrip("\n")
                     self._write_local(full_text.strip() + "\n", rewrite=True)
                 else:
                     self._write_local(text, rewrite=False)
 
             logger.info(
                 "Successfully %s %d characters to Google Doc %s (mirrored to %s)",
-                "rewrote" if rewrite else "appended",
+                action_name,
                 len(text),
                 self.doc_id,
                 self.local_fallback_file,
@@ -274,11 +304,23 @@ class GoogleDocsSync:
     def _write_local(self, text: str, rewrite: bool = False) -> Dict[str, Any]:
         """Write formatted text to local fallback/mirror file."""
         self.local_fallback_file.parent.mkdir(parents=True, exist_ok=True)
-        mode = "w" if rewrite else "a"
-        with open(self.local_fallback_file, mode, encoding="utf-8") as f:
-            f.write(text)
+        if rewrite or not self.local_fallback_file.exists():
+            with open(self.local_fallback_file, "w", encoding="utf-8") as f:
+                f.write(text)
+        elif self.insert_position == "beginning":
+            with open(self.local_fallback_file, "r", encoding="utf-8") as f:
+                existing_text = f.read()
+            if existing_text.strip():
+                updated = text.strip() + "\n\n" + existing_text.lstrip("\n")
+            else:
+                updated = text.strip() + "\n"
+            with open(self.local_fallback_file, "w", encoding="utf-8") as f:
+                f.write(updated)
+        else:
+            with open(self.local_fallback_file, "a", encoding="utf-8") as f:
+                f.write(text)
 
-        action_verb = "Rewrote" if rewrite else "Appended"
+        action_verb = "Rewrote" if rewrite else ("Prepended" if self.insert_position == "beginning" else "Appended")
         target_desc = "local mirror" if self.is_google_configured else "local fallback file"
         logger.info(
             "%s %d characters to %s: %s",
@@ -291,7 +333,7 @@ class GoogleDocsSync:
             "status": "success",
             "target": "local_file",
             "file_path": str(self.local_fallback_file),
-            "mode": "rewrite" if rewrite else "append",
+            "mode": "rewrite" if rewrite else ("prepend" if self.insert_position == "beginning" else "append"),
         }
 
     def _append_local(self, text: str) -> Dict[str, Any]:
