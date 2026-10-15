@@ -114,3 +114,38 @@ def test_mark_synced_prevents_duplicate_history_entries(tmp_path):
     assert len(manager.synced_ids) == 1
     assert len(manager.history) == 1
 
+
+def test_deduplication_via_librus_id(tmp_path):
+    """Verify primary deduplication via canonical Librus ID."""
+    state_file = tmp_path / ".test_state.json"
+    manager = SyncStateManager(str(state_file))
+
+    # Existing sync had "message:843897" in state
+    manager.synced_ids.add("message:843897")
+
+    # New item has timestamped compound id for Finder, but same canonical Librus ID
+    new_item = SchoolFeedItem(
+        id="2026-10-15_061304_message_843897",
+        librus_id="message:843897",
+        item_type=SchoolItemType.MESSAGE,
+        title="Consent visit",
+    )
+
+    # Should be identified as already synced based on librus_id
+    assert len(manager.filter_new([new_item])) == 0
+
+    # Unseen item is allowed
+    unseen_item = SchoolFeedItem(
+        id="2026-10-15_090000_message_999999",
+        librus_id="message:999999",
+        item_type=SchoolItemType.MESSAGE,
+        title="New message",
+    )
+    assert len(manager.filter_new([unseen_item])) == 1
+
+    # Mark synced persists both librus_id and sortable id
+    manager.mark_synced([unseen_item])
+    assert "message:999999" in manager.synced_ids
+    assert "2026-10-15_090000_message_999999" in manager.synced_ids
+
+

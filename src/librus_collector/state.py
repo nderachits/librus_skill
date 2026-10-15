@@ -42,8 +42,26 @@ class SyncStateManager:
             self.synced_ids = set()
 
     def filter_new(self, items: List[SchoolFeedItem]) -> List[SchoolFeedItem]:
-        """Return only items whose ID has not been synced yet."""
-        new_items = [item for item in items if item.id not in self.synced_ids]
+        """Return only items whose primary Librus ID has not been synced yet."""
+        new_items = []
+        for item in items:
+            # 1. Primary deduplication by Librus ID
+            if item.librus_id and item.librus_id in self.synced_ids:
+                continue
+            if item.canonical_id and item.canonical_id in self.synced_ids:
+                continue
+
+            # 2. Check compound sortable ID
+            if item.id in self.synced_ids:
+                continue
+
+            # Backward compatibility check for metadata
+            legacy_id = item.metadata.get("legacy_id")
+            if legacy_id and legacy_id in self.synced_ids:
+                continue
+
+            new_items.append(item)
+
         logger.info(
             "Checked %d total items; %d are new, %d already synced",
             len(items),
@@ -65,9 +83,12 @@ class SyncStateManager:
             self.history = []
 
         for item in items:
-            if item.id not in self.synced_ids:
+            canonical = item.librus_id or item.canonical_id
+            if item.id not in self.synced_ids and canonical not in self.synced_ids:
                 self.history.append({
-                    "id": item.id,
+                    "id": canonical or item.id,
+                    "sortable_id": item.sortable_id,
+                    "librus_id": canonical,
                     "type": item.item_type.value,
                     "title": item.title,
                     "author": item.author,
@@ -75,6 +96,8 @@ class SyncStateManager:
                     "synced_at": now_iso,
                 })
             self.synced_ids.add(item.id)
+            if canonical:
+                self.synced_ids.add(canonical)
 
         # Keep history capped at 1000 latest entries to manage file size
         if len(self.history) > 1000:

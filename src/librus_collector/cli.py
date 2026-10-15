@@ -8,6 +8,7 @@ import sys
 
 from librus_collector.config import get_config
 from librus_collector.google_docs import GoogleDocsSync
+from librus_collector.item_store import ItemStore
 from librus_collector.librus_client import LibrusClient
 from librus_collector.scheduler import DaemonScheduler, generate_crontab_line, generate_launchd_plist
 from librus_collector.security import mask_secret
@@ -32,7 +33,10 @@ def cmd_run(args):
         sys.exit(1)
 
     engine = LibrusSyncEngine(config=config)
-    result = engine.run_sync(force=getattr(args, "force", False))
+    kwargs = {"force": getattr(args, "force", False)}
+    if getattr(args, "rebuild", False):
+        kwargs["rebuild"] = True
+    result = engine.run_sync(**kwargs)
 
     if result.success:
         print(f"\n✅ Synchronization completed successfully!")
@@ -69,6 +73,45 @@ def cmd_clean(args):
         print(f"\n✅ Everything is already clean (no duplicate batches or state history found).")
         print(f"• Local updates file: {config.local_export_path}")
         print(f"• State file: {config.state_file_path}")
+
+
+def cmd_assemble(args):
+    """Assemble all stored individual message markdown files into a single compendium document."""
+    config = get_config()
+    engine = LibrusSyncEngine(config=config)
+    group_by_type = not getattr(args, "flat", False)
+
+    print(f"Assembling compendium from structured storage ({config.items_dir})...")
+    res = engine.assemble(group_by_type=group_by_type)
+
+    total = res.get("total_items_assembled", 0)
+    target = res.get("target", "unknown")
+    print(f"\n✅ Compendium assembled successfully!")
+    print(f"• Items included: {total}")
+    print(f"• Structure: {'Categorized sections' if group_by_type else 'Flat chronological'}")
+    print(f"• Delivery target: {target}")
+    if res.get("doc_id"):
+        print(f"• Google Doc: https://docs.google.com/document/d/{res['doc_id']}/edit")
+    if res.get("local_mirror"):
+        print(f"• Local file: {res['local_mirror']}")
+    elif res.get("file_path"):
+        print(f"• Local file: {res['file_path']}")
+
+
+def cmd_import(args):
+    """Import existing messages from markdown export (librus_updates.md) into individual item files."""
+    config = get_config()
+    source_file = getattr(args, "source", None) or config.local_export_path
+    state = SyncStateManager(config.state_file_path)
+    store = ItemStore(config.items_dir)
+
+    print(f"Importing historical items from {source_file} into {config.items_dir}...")
+    imported = store.import_from_markdown(source_file, state_history=state.history)
+
+    print(f"\n✅ Import completed!")
+    print(f"• Items imported: {len(imported)}")
+    print(f"• Stored in: {config.items_dir}")
+    print(f"• View in Finder: open {config.items_dir}")
 
 
 def cmd_pull(args):
@@ -158,9 +201,13 @@ def cmd_status(args):
     print(f"• Local Mirror Path: {config.local_export_path}")
     print("───────────────────────────────────────────────────────")
     summary = state.get_summary()
+    store = ItemStore(config.items_dir)
     print(f"• State File: {summary['state_file']}")
     print(f"• Total Synced Items: {summary['total_synced_items']}")
     print(f"• Last Sync Run: {summary['last_sync_timestamp'] or 'Never'}")
+    print("───────────────────────────────────────────────────────")
+    print(f"• Item Store Directory: {config.items_dir}")
+    print(f"• Individual Message Files: {store.count()}")
     print("═══════════════════════════════════════════════════════")
 
 
@@ -247,7 +294,37 @@ def main():
         action="store_true",
         help="Force sync all items, bypassing state deduplication",
     )
+    p_run.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Rebuild and reassemble the entire document compendium from stored items after syncing",
+    )
     p_run.set_defaults(func=cmd_run)
+
+    # assemble
+    p_assemble = subparsers.add_parser(
+        "assemble",
+        help="Assemble all stored individual message markdown files into a single compendium",
+    )
+    p_assemble.add_argument(
+        "--flat",
+        action="store_true",
+        help="Sort purely chronologically instead of grouping by category sections",
+    )
+    p_assemble.set_defaults(func=cmd_assemble)
+
+    # import
+    p_import = subparsers.add_parser(
+        "import",
+        help="Import historical items from markdown export (librus_updates.md) into individual item files",
+    )
+    p_import.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Path to markdown file to import (default: configured LOCAL_EXPORT_PATH)",
+    )
+    p_import.set_defaults(func=cmd_import)
 
     # daemon
     p_daemon = subparsers.add_parser("daemon", help="Run hourly daemon loop")

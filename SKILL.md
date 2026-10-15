@@ -33,9 +33,21 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 
 ### 2. Available Commands
 
-Run a single sync immediately:
+Run a single sync immediately (saves items to `data/items/` and updates documents):
 ```bash
 uv run librus-sync run
+```
+
+Reassemble the entire unified compendium from all stored items:
+```bash
+uv run librus-sync assemble
+# or flat chronological ordering without category grouping:
+uv run librus-sync assemble --flat
+```
+
+Import existing historical messages from `librus_updates.md` into individual Markdown files:
+```bash
+uv run librus-sync import
 ```
 
 Run as an hourly background daemon (every 3600 seconds):
@@ -43,9 +55,14 @@ Run as an hourly background daemon (every 3600 seconds):
 uv run librus-sync daemon --interval 3600
 ```
 
-Inspect sync status and deduplication counts:
+Inspect sync status, state, and stored message count:
 ```bash
 uv run librus-sync status
+```
+
+Open individual message files in macOS Finder (sorted chronologically):
+```bash
+open data/items
 ```
 
 Create a new Google Doc automatically:

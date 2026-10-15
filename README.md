@@ -103,7 +103,21 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
 uv run librus-sync run
 ```
 
-### Force resync all items (clean rewrite without duplicates):
+### Reassemble the unified compendium document:
+Compiles all individual items stored in `data/items/` into a single, cohesive, categorized document:
+```bash
+uv run librus-sync assemble
+# or pure chronological order:
+uv run librus-sync assemble --flat
+```
+
+### Import existing messages from `librus_updates.md`:
+Splits and persists all messages into structured `data/items/` files with YAML frontmatter:
+```bash
+uv run librus-sync import
+```
+
+### Force resync all items:
 ```bash
 uv run librus-sync run --force
 ```

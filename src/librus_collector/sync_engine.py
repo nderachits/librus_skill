@@ -2,11 +2,12 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from librus_collector.config import AppConfig, get_config
-from librus_collector.formatter import format_batch_for_doc
+from librus_collector.formatter import assemble_full_document, format_batch_for_doc
 from librus_collector.google_docs import GoogleDocsSync
+from librus_collector.item_store import ItemStore
 from librus_collector.librus_client import LibrusClient
 from librus_collector.models import SchoolItemType, SyncResult
 from librus_collector.state import SyncStateManager
@@ -23,9 +24,11 @@ class LibrusSyncEngine:
         librus_client: Optional[LibrusClient] = None,
         state_manager: Optional[SyncStateManager] = None,
         docs_sync: Optional[GoogleDocsSync] = None,
+        item_store: Optional[ItemStore] = None,
     ):
         self.config = config or get_config()
         self.state_manager = state_manager or SyncStateManager(self.config.state_file_path)
+        self.item_store = item_store or ItemStore(self.config.items_dir)
         self.docs_sync = docs_sync or GoogleDocsSync(
             doc_id=self.config.google_doc_id,
             service_account_file=self.config.google_service_account_file,
@@ -45,20 +48,21 @@ class LibrusSyncEngine:
         )
         return self.librus_client
 
-    def run_sync(self, force: bool = False) -> SyncResult:
+    def run_sync(self, force: bool = False, rebuild: bool = False) -> SyncResult:
         """
         Execute one sync cycle:
         1. Query Librus for announcements, messages, and events.
         2. Identify unseen items using state manager (or all items if force=True).
-        3. Format and append items to Google Doc (or local fallback).
-        4. Persist updated sync state.
+        3. Fetch full content bodies and save items to structured ItemStore.
+        4. Format and deliver items to Google Doc and local mirror.
+        5. Persist updated sync state.
         """
         start_time = datetime.now(timezone.utc)
         logger.info("Starting Librus synchronization cycle at %s", start_time.isoformat())
 
         try:
             client = self._get_client()
-            
+
             # Fetch all items from Librus
             all_items = client.collect_all(limit_messages=self.config.fetch_messages_limit)
             logger.info("Collected %d total items from Librus", len(all_items))
@@ -66,7 +70,7 @@ class LibrusSyncEngine:
             # Filter for new items (or all items if forced)
             new_items = all_items if force else self.state_manager.filter_new(all_items)
 
-            if not new_items:
+            if not new_items and not rebuild:
                 logger.info("No new items to sync. State is up to date.")
                 return SyncResult(
                     timestamp=start_time,
@@ -86,11 +90,21 @@ class LibrusSyncEngine:
                     except Exception as e:
                         logger.warning("Could not fetch full body for message %s: %s", item.id, e)
 
-            # Format items for Google Doc / NotebookLM
-            formatted_text = format_batch_for_doc(new_items, batch_time=start_time)
+            # Save items into structured ItemStore (Option 3: individual .md files with YAML frontmatter)
+            if new_items:
+                self.item_store.save_items(new_items)
+                logger.info("Persisted %d items into structured storage at %s", len(new_items), self.item_store.items_dir)
 
-            # Write/append to Google Doc (and maintain exact local mirror)
-            append_res = self.docs_sync.append_text(formatted_text, rewrite=force)
+            if rebuild:
+                # Assemble entire document from all stored items
+                all_stored = self.item_store.load_all_items()
+                formatted_text = assemble_full_document(all_stored, group_by_type=True, assemble_time=start_time)
+                append_res = self.docs_sync.append_text(formatted_text, rewrite=True)
+            else:
+                # Format incremental batch
+                formatted_text = format_batch_for_doc(new_items, batch_time=start_time)
+                append_res = self.docs_sync.append_text(formatted_text, rewrite=force)
+
             target_type = append_res.get("target", "unknown")
 
             # Persist state (reset history if forced)
@@ -116,3 +130,14 @@ class LibrusSyncEngine:
                 error_message=str(e),
                 doc_id=self.docs_sync.doc_id,
             )
+
+    def assemble(self, group_by_type: bool = True) -> Dict[str, Any]:
+        """
+        Assemble all items stored in ItemStore into a single cohesive document
+        and update Google Doc and local mirror.
+        """
+        items = self.item_store.load_all_items(sort_by="date")
+        formatted_text = assemble_full_document(items, group_by_type=group_by_type)
+        res = self.docs_sync.append_text(formatted_text, rewrite=True)
+        res["total_items_assembled"] = len(items)
+        return res

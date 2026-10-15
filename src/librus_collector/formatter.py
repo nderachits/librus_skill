@@ -63,6 +63,78 @@ def format_batch_for_doc(items: List[SchoolFeedItem], batch_time: Optional[datet
     return "".join(header) + "\n".join(item_blocks) + "\n"
 
 
+def assemble_full_document(
+    items: List[SchoolFeedItem],
+    group_by_type: bool = True,
+    title: Optional[str] = None,
+    assemble_time: Optional[datetime] = None,
+) -> str:
+    """
+    Assemble all stored items into a single, cohesive, up-to-date document.
+    Eliminates redundant sync batch headers and organizes items logically
+    for optimal NotebookLM synthesis and human readability.
+    """
+    if not items:
+        return "# LIBRUS UPDATES\n\n(Brak powiadomień / No updates collected yet)\n"
+
+    dt = assemble_time or datetime.now(timezone.utc)
+    ts_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    doc_title = title or "LIBRUS SCHOOL UPDATES COMPENDIUM"
+
+    # Count by type
+    counts: Dict[SchoolItemType, int] = {}
+    for item in items:
+        counts[item.item_type] = counts.get(item.item_type, 0) + 1
+
+    header_lines = [
+        f"# ══════════════════════════════════════════════════════════════════════",
+        f"# {doc_title}",
+        f"# Assembled: {ts_str} | Total items: {len(items)}",
+        f"# ══════════════════════════════════════════════════════════════════════\n",
+        f"### Podsumowanie / Summary:",
+        f"• 📅 Terminarz i Wydarzenia / Events: {counts.get(SchoolItemType.EVENT, 0)}",
+        f"• 📢 Ogłoszenia / Announcements: {counts.get(SchoolItemType.ANNOUNCEMENT, 0)}",
+        f"• 📝 Zadania domowe / Homework: {counts.get(SchoolItemType.HOMEWORK, 0)}",
+        f"• ✉️ Wiadomości / Messages: {counts.get(SchoolItemType.MESSAGE, 0)}",
+        f"• 📋 Uwagi / Notes: {counts.get(SchoolItemType.NOTE, 0)}",
+        f"\n---\n",
+    ]
+
+    if not group_by_type:
+        # Flat chronological order (newest first)
+        sorted_items = sorted(items, key=lambda it: it.sort_datetime, reverse=True)
+        blocks = [format_single_item(it) for it in sorted_items]
+        return "\n".join(header_lines) + "\n" + "\n".join(blocks)
+
+    # Grouped sections in natural school priority order
+    sections_order = [
+        (SchoolItemType.EVENT, "📅 TERMINARZ I WYDARZENIA / EVENTS & EXAMS"),
+        (SchoolItemType.ANNOUNCEMENT, "📢 OGŁOSZENIA / ANNOUNCEMENTS"),
+        (SchoolItemType.HOMEWORK, "📝 ZADANIA DOMOWE / HOMEWORK"),
+        (SchoolItemType.MESSAGE, "✉️ WIADOMOŚCI / MESSAGES"),
+        (SchoolItemType.NOTE, "📋 UWAGI I INFORMACJE / NOTES & CONDUCT"),
+    ]
+
+    section_outputs = []
+    for it_type, section_title in sections_order:
+        matching = [it for it in items if it.item_type == it_type]
+        if not matching:
+            continue
+
+        # Sort within section by date
+        matching.sort(key=lambda it: it.sort_datetime, reverse=True)
+
+        sec_header = [
+            f"\n# ──────────────────────────────────────────────────────────────────────",
+            f"# {section_title} ({len(matching)})",
+            f"# ──────────────────────────────────────────────────────────────────────\n",
+        ]
+        sec_blocks = [format_single_item(it) for it in matching]
+        section_outputs.append("\n".join(sec_header) + "\n" + "\n".join(sec_blocks))
+
+    return "\n".join(header_lines) + "\n" + "\n".join(section_outputs)
+
+
 def clean_markdown_batches(text: str) -> str:
     """
     Remove duplicate sync batches and duplicate items from markdown text.

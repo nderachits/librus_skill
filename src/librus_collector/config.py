@@ -58,6 +58,10 @@ class AppConfig(BaseModel):
         default_factory=lambda: os.getenv("LIBRUS_STATE_FILE", ".librus_state.json"),
         description="Path to deduplication state JSON file",
     )
+    items_dir: str = Field(
+        default_factory=lambda: os.getenv("LIBRUS_ITEMS_DIR", "data/items"),
+        description="Path to directory where individual markdown items are stored",
+    )
 
     def validate_librus_credentials(self) -> None:
         """Verify that Librus credentials have been configured."""

@@ -202,7 +202,7 @@ def test_fetch_messages_via_json_api():
     assert len(items) == 1
     msg = items[0]
     assert msg.item_type == SchoolItemType.MESSAGE
-    assert msg.id == "message:msg_999"
+    assert msg.id == "2026-10-15_112000_message_msg_999"
     assert msg.title == "Konkurs informatyczny"
     assert msg.author == "Anna Nowak"
     assert "przesyłam informację" in msg.content
@@ -245,7 +245,7 @@ def test_fetch_messages_html_fallback():
     assert len(items) == 1
     msg = items[0]
     assert msg.item_type == SchoolItemType.MESSAGE
-    assert msg.id == "message:123456"
+    assert msg.id == "2026-10-15_080000_message_123456"
     assert msg.title == "Zastępstwo za lekcję fizyki"
     assert msg.author == "Kowalski Tomasz"
     assert msg.date == "2026-10-15 08:00"
@@ -588,7 +588,7 @@ def test_parse_messages_html_realistic_synergia_table():
     assert len(items) == 2
 
     # Item 1
-    assert items[0].id == "message:1254708"
+    assert items[0].id == "2026-10-15_061304_message_1254708"
     assert items[0].title == "Consent for visit to a music school"
     assert items[0].author == "Kruk-Zabawa Beata (Kruk-Zabawa Beata) [Nauczyciel]"
     assert items[0].date == "2026-10-15 06:13:04"
@@ -596,7 +596,7 @@ def test_parse_messages_html_realistic_synergia_table():
     assert items[0].metadata["message_id"] == "1254708"
 
     # Item 2
-    assert items[1].id == "message:1207517"
+    assert items[1].id == "2026-10-13_091243_message_1207517"
     assert items[1].title == "Dzień wolny"
     assert items[1].author == "Anna Jurczak-Nicpoń"
     assert items[1].date == "2026-10-13 09:12:43"

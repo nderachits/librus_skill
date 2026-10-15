@@ -261,7 +261,7 @@ class LibrusClient:
 
             # Deterministic ID with content hash to prevent collisions on same author/date
             raw_id = f"{title}_{date_str}_{author}_{content[:60]}"
-            feed_id = SchoolFeedItem.make_id(SchoolItemType.ANNOUNCEMENT, raw_id)
+            feed_id = SchoolFeedItem.make_id(SchoolItemType.ANNOUNCEMENT, raw_id, timestamp=date_str)
 
             items.append(
                 SchoolFeedItem(
@@ -326,7 +326,7 @@ class LibrusClient:
             if has_attachment:
                 attachments.append("Załącznik dołączony do wiadomości")
 
-            feed_id = SchoolFeedItem.make_id(SchoolItemType.MESSAGE, msg_id)
+            feed_id = SchoolFeedItem.make_id(SchoolItemType.MESSAGE, msg_id, timestamp=send_date)
             items.append(
                 SchoolFeedItem(
                     id=feed_id,
@@ -431,7 +431,7 @@ class LibrusClient:
             if not msg_id:
                 msg_id = f"{author}_{title}_{date_str}"
 
-            feed_id = SchoolFeedItem.make_id(SchoolItemType.MESSAGE, msg_id)
+            feed_id = SchoolFeedItem.make_id(SchoolItemType.MESSAGE, msg_id, timestamp=date_str)
             attachments = ["Załącznik dołączony do wiadomości"] if has_attachment else []
 
             items.append(
@@ -639,12 +639,15 @@ class LibrusClient:
                 ]
             ):
                 raw_id = f"event_{text.strip()}"
-                feed_id = SchoolFeedItem.make_id(SchoolItemType.EVENT, raw_id)
+                m_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b|\b(\d{2}\.\d{2}\.\d{4})\b", text)
+                event_date = m_date.group(0) if m_date else ""
+                feed_id = SchoolFeedItem.make_id(SchoolItemType.EVENT, raw_id, timestamp=event_date or None)
                 items.append(
                     SchoolFeedItem(
                         id=feed_id,
                         item_type=SchoolItemType.EVENT,
                         title="Terminarz: Wydarzenie / Sprawdzian",
+                        date=event_date,
                         content=text,
                         metadata={"source": "synergia_terminarz"},
                     )
@@ -681,7 +684,7 @@ class LibrusClient:
                     hw_title = cells[2]
                     hw_date = cells[3]
                     raw_id = f"{subject}_{hw_title}_{hw_date}"
-                    feed_id = SchoolFeedItem.make_id(SchoolItemType.HOMEWORK, raw_id)
+                    feed_id = SchoolFeedItem.make_id(SchoolItemType.HOMEWORK, raw_id, timestamp=hw_date)
                     items.append(
                         SchoolFeedItem(
                             id=feed_id,
@@ -733,7 +736,7 @@ class LibrusClient:
                     content += f"\nTreść: {remark_text}"
 
                     raw_id = f"{date_str}_{teacher}_{remark_text[:50]}"
-                    feed_id = SchoolFeedItem.make_id(SchoolItemType.NOTE, raw_id)
+                    feed_id = SchoolFeedItem.make_id(SchoolItemType.NOTE, raw_id, timestamp=date_str)
 
                     items.append(
                         SchoolFeedItem(

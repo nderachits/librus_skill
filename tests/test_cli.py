@@ -140,3 +140,48 @@ def test_cli_push(capsys, tmp_path):
     assert "doc_xyz" in captured.out
 
 
+def test_cli_assemble(capsys, tmp_path):
+    """Test CLI assemble command."""
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.LibrusSyncEngine") as mock_engine_cls:
+        mock_cfg.return_value.items_dir = str(tmp_path / "items")
+        mock_engine = mock_engine_cls.return_value
+        mock_engine.assemble.return_value = {
+            "status": "success",
+            "target": "local_file",
+            "total_items_assembled": 15,
+            "local_mirror": "librus_updates.md",
+        }
+
+        with patch("sys.argv", ["librus-sync", "assemble"]):
+            main()
+
+    mock_engine.assemble.assert_called_once_with(group_by_type=True)
+    captured = capsys.readouterr()
+    assert "Compendium assembled successfully!" in captured.out
+    assert "15" in captured.out
+
+
+def test_cli_import(capsys, tmp_path):
+    """Test CLI import command."""
+    sample_md = tmp_path / "updates.md"
+    sample_md.write_text("sample", encoding="utf-8")
+
+    with patch("librus_collector.cli.get_config") as mock_cfg, \
+         patch("librus_collector.cli.ItemStore") as mock_store_cls, \
+         patch("librus_collector.cli.SyncStateManager") as mock_state_cls:
+        mock_cfg.return_value.local_export_path = str(sample_md)
+        mock_cfg.return_value.items_dir = str(tmp_path / "items")
+        mock_cfg.return_value.state_file_path = str(tmp_path / "state.json")
+
+        mock_store = mock_store_cls.return_value
+        mock_store.import_from_markdown.return_value = ["item1", "item2"]
+
+        with patch("sys.argv", ["librus-sync", "import"]):
+            main()
+
+    captured = capsys.readouterr()
+    assert "Import completed!" in captured.out
+    assert "2" in captured.out
+
+
